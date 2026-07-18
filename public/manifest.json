@@ -1,6 +1,6 @@
 {
-    "name": "Vocabulary App",
-    "short_name": "VocabApp",
+    "name": "Power Vocab",
+    "short_name": "PowerVocab",
     "description": "Learn and practice vocabulary words",
     "start_url": "/",
     "display": "standalone",
