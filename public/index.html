@@ -21,8 +21,6 @@
     .btn-blue:hover { background: #1565C0; }
     .btn-orange { background: #F57C00; }
     .btn-orange:hover { background: #E65100; }
-    .btn-gray { background: #757575; }
-    .btn-gray:hover { background: #616161; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f0f0f0; }
@@ -64,13 +62,14 @@
       <h2>Register</h2>
       <div id="regStep1">
         <input id="regPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
-        <button onclick="sendRegOTP()">Send OTP</button>
+        <input id="regEmail" placeholder="Enter email address" type="email" />
+        <button onclick="sendRegOTP()">Send OTP to Email</button>
         <br/><br/>
         <button class="link-btn" onclick="showSection('loginSection')">Already registered? Login</button>
         <p id="regMsg1" class="msg"></p>
       </div>
       <div id="regStep2" class="hidden">
-        <p id="otpDisplay" style="background:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32; font-weight:bold;"></p>
+        <p style="background:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32;" id="regOtpMsg"></p>
         <input id="regOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
         <input id="regPassword" type="password" placeholder="Create password" />
         <input id="regPassword2" type="password" placeholder="Confirm password" />
@@ -85,14 +84,14 @@
     <div class="auth-box">
       <h2>Forgot Password</h2>
       <div id="forgotStep1">
-        <input id="forgotPhone" placeholder="Enter registered phone number" maxlength="10" type="tel" />
-        <button onclick="sendForgotOTP()">Send OTP</button>
+        <input id="forgotEmail" placeholder="Enter registered email" type="email" />
+        <button onclick="sendForgotOTP()">Send OTP to Email</button>
         <br/><br/>
         <button class="link-btn" onclick="showSection('loginSection')">Back to Login</button>
         <p id="forgotMsg1" class="msg"></p>
       </div>
       <div id="forgotStep2" class="hidden">
-        <p id="forgotOtpDisplay" style="background:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32; font-weight:bold;"></p>
+        <p style="background:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32;" id="forgotOtpMsg"></p>
         <input id="forgotOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
         <input id="newPassword" type="password" placeholder="Enter new password" />
         <input id="newPassword2" type="password" placeholder="Confirm new password" />
@@ -172,7 +171,8 @@
     let practiceWords = [];
     let currentIndex = 0;
     let regPhoneNum = '';
-    let forgotPhoneNum = '';
+    let regEmailAddr = '';
+    let forgotEmailAddr = '';
 
     if (token) showApp();
 
@@ -205,20 +205,23 @@
 
     async function sendRegOTP() {
       const p = document.getElementById('regPhone').value.trim();
+      const e = document.getElementById('regEmail').value.trim();
       if (!p || p.length !== 10) { showMsg('regMsg1', 'Enter valid 10 digit phone number', 'red'); return; }
+      if (!e || !e.includes('@')) { showMsg('regMsg1', 'Enter valid email address', 'red'); return; }
       showMsg('regMsg1', 'Sending OTP...', 'blue');
       const res = await fetch('/api/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: p })
+        body: JSON.stringify({ phone: p, email: e })
       });
       const data = await res.json();
       if (data.error) { showMsg('regMsg1', data.error, 'red'); }
       else {
         regPhoneNum = p;
+        regEmailAddr = e;
         document.getElementById('regStep1').classList.add('hidden');
         document.getElementById('regStep2').classList.remove('hidden');
-        document.getElementById('otpDisplay').textContent = data.message;
+        document.getElementById('regOtpMsg').textContent = data.message;
       }
     }
 
@@ -231,7 +234,7 @@
       const res = await fetch('/api/verify-register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: regPhoneNum, otp, password: pwd })
+        body: JSON.stringify({ phone: regPhoneNum, email: regEmailAddr, otp, password: pwd })
       });
       const data = await res.json();
       if (data.error) { showMsg('regMsg2', data.error, 'red'); }
@@ -246,21 +249,21 @@
     }
 
     async function sendForgotOTP() {
-      const p = document.getElementById('forgotPhone').value.trim();
-      if (!p || p.length !== 10) { showMsg('forgotMsg1', 'Enter valid 10 digit phone number', 'red'); return; }
+      const e = document.getElementById('forgotEmail').value.trim();
+      if (!e || !e.includes('@')) { showMsg('forgotMsg1', 'Enter valid email address', 'red'); return; }
       showMsg('forgotMsg1', 'Sending OTP...', 'blue');
       const res = await fetch('/api/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: p })
+        body: JSON.stringify({ email: e })
       });
       const data = await res.json();
       if (data.error) { showMsg('forgotMsg1', data.error, 'red'); }
       else {
-        forgotPhoneNum = p;
+        forgotEmailAddr = e;
         document.getElementById('forgotStep1').classList.add('hidden');
         document.getElementById('forgotStep2').classList.remove('hidden');
-        document.getElementById('forgotOtpDisplay').textContent = data.message;
+        document.getElementById('forgotOtpMsg').textContent = data.message;
       }
     }
 
@@ -273,7 +276,7 @@
       const res = await fetch('/api/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: forgotPhoneNum, otp, password: pwd })
+        body: JSON.stringify({ email: forgotEmailAddr, otp, password: pwd })
       });
       const data = await res.json();
       if (data.error) { showMsg('forgotMsg2', data.error, 'red'); }
