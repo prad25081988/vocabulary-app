@@ -28,8 +28,7 @@ def send_otp_email(email):
         msg['Subject'] = "Your Vocabulary App OTP"
         body = f"Your OTP for Vocabulary App is: {otp}\n\nThis OTP is valid for 10 minutes.\n\nDo not share this OTP with anyone."
         msg.attach(MIMEText(body, 'plain'))
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
+        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, email, msg.as_string())
         server.quit()
