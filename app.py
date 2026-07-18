@@ -27,8 +27,10 @@ def send_otp(phone):
     }
     try:
         response = requests.post(url, json=payload, headers=headers)
+        print("Fast2SMS response:", response.text)
         return True
-    except:
+    except Exception as e:
+        print("Fast2SMS error:", str(e))
         return False
 
 
