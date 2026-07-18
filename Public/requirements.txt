@@ -1,0 +1,4 @@
+flask
+bcrypt
+pyjwt
+gunicorn

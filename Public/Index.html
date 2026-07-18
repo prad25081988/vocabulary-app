@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Vocabulary App</title>
+  <style>
+    body { font-family: Arial; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
+    h1 { color: #333; text-align: center; }
+    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    input, textarea { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
+    button { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+    button:hover { background: #45a049; }
+    .btn-red { background: #e53935; }
+    .btn-red:hover { background: #c62828; }
+    .btn-blue { background: #1976D2; }
+    .btn-blue:hover { background: #1565C0; }
+    .btn-orange { background: #F57C00; }
+    .btn-orange:hover { background: #E65100; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f0f0f0; }
+    .hidden { display: none; }
+    .practice-card { text-align: center; padding: 30px; }
+    .practice-word { font-size: 32px; font-weight: bold; color: #333; margin-bottom: 20px; }
+    .practice-meaning { font-size: 18px; color: #666; margin-bottom: 20px; }
+    .progress { color: #999; font-size: 14px; margin-bottom: 20px; }
+    .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+    .tab { padding: 10px 20px; background: #ddd; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
+    .tab.active { background: #4CAF50; color: white; }
+    .auth-box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    #userInfo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    #error { font-size: 14px; margin-top: 5px; }
+  </style>
+</head>
+<body>
+  <h1>📚 Vocabulary App</h1>
+
+  <!-- Auth Section -->
+  <div id="authSection">
+    <div class="auth-box">
+      <h2>Login / Register</h2>
+      <input id="phone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
+      <input id="password" type="password" placeholder="Enter password" />
+      <button onclick="login()">Login</button>
+      <button class="btn-blue" onclick="register()" style="margin-left:10px;">Register</button>
+      <p id="error"></p>
+    </div>
+  </div>
+
+  <!-- Main App Section -->
+  <div id="appSection" class="hidden">
+    <div id="userInfo">
+      <span>👋 Hi, <strong id="welcomeUser"></strong>!</span>
+      <button class="btn-red" onclick="logout()">Logout</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('addTab', this)">Add Words</button>
+      <button class="tab" onclick="showTab('listTab', this)">Word List</button>
+      <button class="tab" onclick="showTab('practiceTab', this)">Practice</button>
+    </div>
+
+    <!-- Add Word Tab -->
+    <div id="addTab" class="card">
+      <h2>Add New Word</h2>
+      <input id="wordInput" placeholder="Enter word..." />
+      <textarea id="meaningInput" placeholder="Enter meaning..." rows="3"></textarea>
+      <button onclick="addWord()">Add Word</button>
+      <p id="addMessage"></p>
+    </div>
+
+    <!-- Word List Tab -->
+    <div id="listTab" class="card hidden">
+      <h2>All Words (<span id="wordCount">0</span>)</h2>
+      <table>
+        <thead>
+          <tr><th>Word</th><th>Meaning</th><th>Action</th></tr>
+        </thead>
+        <tbody id="wordList"></tbody>
+      </table>
+    </div>
+
+    <!-- Practice Tab -->
+    <div id="practiceTab" class="card hidden">
+      <div id="practiceStart">
+        <h2>Practice Mode</h2>
+        <p>Words shown one by one in random order. Guess the meaning before revealing!</p>
+        <button class="btn-blue" onclick="startPractice()">Start Practice</button>
+      </div>
+      <div id="practiceArea" class="hidden practice-card">
+        <div class="progress">Word <span id="currentNum">1</span> of <span id="totalNum">0</span></div>
+        <div class="practice-word" id="practiceWord"></div>
+        <button class="btn-orange" onclick="revealMeaning()">Reveal Meaning</button>
+        <div class="practice-meaning hidden" id="practiceMeaning"></div>
+        <br/><br/>
+        <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
+        <button class="btn-red hidden" id="finishBtn" onclick="finishPractice()">Finish</button>
+      </div>
+      <div id="practiceComplete" class="hidden practice-card">
+        <h2>🎉 Practice Complete!</h2>
+        <p>You reviewed all words!</p>
+        <button class="btn-blue" onclick="startPractice()">Practice Again</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let token = localStorage.getItem('vocab_token');
+    let phone = localStorage.getItem('vocab_phone');
+    let practiceWords = [];
+    let currentIndex = 0;
+
+    if (token) showApp();
+
+    async function register() {
+      const p = document.getElementById('phone').value.trim();
+      const pwd = document.getElementById('password').value;
+      if (!p || !pwd) { showError('Please enter phone and password', 'red'); return; }
+      const res = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: p, password: pwd })
+      });
+      const data = await res.json();
+      if (data.error) { showError(data.error, 'red'); }
+      else { showError('Registered successfully! Please login.', 'green'); }
+    }
+
+    async function login() {
+      const p = document.getElementById('phone').value.trim();
+      const pwd = document.getElementById('password').value;
+      if (!p || !pwd) { showError('Please enter phone and password', 'red'); return; }
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: p, password: pwd })
+      });
+      const data = await res.json();
+      if (data.error) { showError(data.error, 'red'); }
+      else {
+        token = data.token;
+        phone = data.phone;
+        localStorage.setItem('vocab_token', token);
+        localStorage.setItem('vocab_phone', phone);
+        showApp();
+      }
+    }
+
+  function logout() {
+      localStorage.removeItem('vocab_token');
+      localStorage.removeItem('vocab_phone');
+      token = null;
+      practiceWords = [];
+      currentIndex = 0;
+      document.getElementById('practiceStart').classList.remove('hidden');
+      document.getElementById('practiceArea').classList.add('hidden');
+      document.getElementById('practiceComplete').classList.add('hidden');
+      document.getElementById('authSection').classList.remove('hidden');
+      document.getElementById('appSection').classList.add('hidden');
+    }
+
+   function showApp() {
+      document.getElementById('authSection').classList.add('hidden');
+      document.getElementById('appSection').classList.remove('hidden');
+      document.getElementById('welcomeUser').textContent = phone;
+      
+      // Reset to Add Words tab by default
+      ['addTab', 'listTab', 'practiceTab'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById('addTab').classList.remove('hidden');
+      document.querySelectorAll('.tab')[0].classList.add('active');
+    }
+
+    function showError(msg, color) {
+      const e = document.getElementById('error');
+      e.textContent = msg;
+      e.style.color = color;
+    }
+
+    function showTab(tabId, btn) {
+      ['addTab', 'listTab', 'practiceTab'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.getElementById(tabId).classList.remove('hidden');
+      btn.classList.add('active');
+      if (tabId === 'listTab') loadWords();
+    }
+
+    async function addWord() {
+      const word = document.getElementById('wordInput').value.trim();
+      const meaning = document.getElementById('meaningInput').value.trim();
+      if (!word || !meaning) {
+        document.getElementById('addMessage').textContent = 'Please enter both word and meaning!';
+        document.getElementById('addMessage').style.color = 'red';
+        return;
+      }
+      await fetch('/api/words', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token },
+        body: JSON.stringify({ word, meaning })
+      });
+      document.getElementById('wordInput').value = '';
+      document.getElementById('meaningInput').value = '';
+      document.getElementById('addMessage').textContent = '✅ Word added successfully!';
+      document.getElementById('addMessage').style.color = 'green';
+      setTimeout(() => document.getElementById('addMessage').textContent = '', 2000);
+    }
+
+    async function loadWords() {
+      const res = await fetch('/api/words', { headers: { 'Authorization': token } });
+      const words = await res.json();
+      document.getElementById('wordCount').textContent = words.length;
+      const tbody = document.getElementById('wordList');
+      tbody.innerHTML = '';
+      if (words.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">No words added yet</td></tr>';
+        return;
+      }
+      words.forEach(w => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><strong>${w.word}</strong></td>
+          <td>${w.meaning}</td>
+          <td><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function deleteWord(id) {
+      await fetch(`/api/words/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': token }
+      });
+      loadWords();
+    }
+
+    async function startPractice() {
+      const res = await fetch('/api/practice', { headers: { 'Authorization': token } });
+      practiceWords = await res.json();
+      if (practiceWords.length === 0) {
+        alert('No words added yet! Please add some words first.');
+        return;
+      }
+      currentIndex = 0;
+      document.getElementById('practiceStart').classList.add('hidden');
+      document.getElementById('practiceComplete').classList.add('hidden');
+      document.getElementById('practiceArea').classList.remove('hidden');
+      document.getElementById('totalNum').textContent = practiceWords.length;
+      showWord();
+    }
+
+    function showWord() {
+      const w = practiceWords[currentIndex];
+      document.getElementById('currentNum').textContent = currentIndex + 1;
+      document.getElementById('practiceWord').textContent = w.word;
+      document.getElementById('practiceMeaning').textContent = w.meaning;
+      document.getElementById('practiceMeaning').classList.add('hidden');
+      document.getElementById('nextBtn').classList.add('hidden');
+      document.getElementById('finishBtn').classList.add('hidden');
+    }
+
+    function revealMeaning() {
+      document.getElementById('practiceMeaning').classList.remove('hidden');
+      if (currentIndex < practiceWords.length - 1) {
+        document.getElementById('nextBtn').classList.remove('hidden');
+      } else {
+        document.getElementById('finishBtn').classList.remove('hidden');
+      }
+    }
+
+    function nextWord() {
+      currentIndex++;
+      showWord();
+    }
+
+    function finishPractice() {
+      document.getElementById('practiceArea').classList.add('hidden');
+      document.getElementById('practiceComplete').classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>
