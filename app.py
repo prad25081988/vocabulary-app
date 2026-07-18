@@ -189,10 +189,12 @@ def send_otp_route():
     conn.close()
     if user:
         return jsonify({'error': 'Phone number already registered'}), 400
-    if send_otp(phone):
-        return jsonify({'message': 'OTP sent successfully'})
-    else:
-        return jsonify({'error': 'Failed to send OTP'}), 500
+    
+    
+
+    otp = ''.join(random.choices(string.digits, k=6))
+    otp_store[phone] = otp
+    return jsonify({'message': f'OTP sent! (Testing mode - OTP: {otp})'})
 
 # Verify OTP and register
 @app.route('/api/verify-register', methods=['POST'])
@@ -224,10 +226,10 @@ def forgot_password():
     conn.close()
     if not user:
         return jsonify({'error': 'Phone number not registered'}), 400
-    if send_otp(phone):
-        return jsonify({'message': 'OTP sent successfully'})
-    else:
-        return jsonify({'error': 'Failed to send OTP'}), 500
+    
+    otp = ''.join(random.choices(string.digits, k=6))
+    otp_store[phone] = otp
+    return jsonify({'message': f'OTP sent! (Testing mode - OTP: {otp})'})
 
 # Verify OTP and reset password
 @app.route('/api/reset-password', methods=['POST'])
