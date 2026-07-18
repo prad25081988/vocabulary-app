@@ -1,10 +1,36 @@
 from flask import Flask, request, jsonify, send_from_directory
 import sqlite3
 import random
+import string
 import bcrypt
 import jwt
 import os
+import requests
 from functools import wraps
+
+# Store OTPs temporarily
+otp_store = {}
+
+def send_otp(phone):
+    otp = ''.join(random.choices(string.digits, k=6))
+    otp_store[phone] = otp
+    url = "https://www.fast2sms.com/dev/bulkV2"
+    headers = {
+        "authorization": os.environ.get('FAST2SMS_API_KEY'),
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "route": "otp",
+        "variables_values": otp,
+        "flash": 0,
+        "numbers": phone
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        return True
+    except:
+        return False
+
 
 app = Flask(__name__)
 SECRET = 'vocabsecretkey123'
@@ -147,6 +173,78 @@ def service_worker():
 @app.route('/icon.png')
 def icon():
     return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'icon.png')
+
+
+# Send OTP for registration
+@app.route('/api/send-otp', methods=['POST'])
+def send_otp_route():
+    data = request.json
+    phone = data['phone']
+    if len(phone) != 10 or not phone.isdigit():
+        return jsonify({'error': 'Enter valid 10 digit phone number'}), 400
+    conn = get_db()
+    user = conn.execute('SELECT * FROM users WHERE phone = ?', (phone,)).fetchone()
+    conn.close()
+    if user:
+        return jsonify({'error': 'Phone number already registered'}), 400
+    if send_otp(phone):
+        return jsonify({'message': 'OTP sent successfully'})
+    else:
+        return jsonify({'error': 'Failed to send OTP'}), 500
+
+# Verify OTP and register
+@app.route('/api/verify-register', methods=['POST'])
+def verify_register():
+    data = request.json
+    phone = data['phone']
+    otp = data['otp']
+    password = data['password']
+    if phone not in otp_store or otp_store[phone] != otp:
+        return jsonify({'error': 'Invalid or expired OTP'}), 400
+    del otp_store[phone]
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    try:
+        conn = get_db()
+        conn.execute('INSERT INTO users (phone, password) VALUES (?, ?)', (phone, hashed))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Registered successfully'})
+    except:
+        return jsonify({'error': 'Registration failed'}), 400
+
+# Send OTP for forgot password
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.json
+    phone = data['phone']
+    conn = get_db()
+    user = conn.execute('SELECT * FROM users WHERE phone = ?', (phone,)).fetchone()
+    conn.close()
+    if not user:
+        return jsonify({'error': 'Phone number not registered'}), 400
+    if send_otp(phone):
+        return jsonify({'message': 'OTP sent successfully'})
+    else:
+        return jsonify({'error': 'Failed to send OTP'}), 500
+
+# Verify OTP and reset password
+@app.route('/api/reset-password', methods=['POST'])
+def reset_password():
+    data = request.json
+    phone = data['phone']
+    otp = data['otp']
+    password = data['password']
+    if phone not in otp_store or otp_store[phone] != otp:
+        return jsonify({'error': 'Invalid or expired OTP'}), 400
+    del otp_store[phone]
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    conn = get_db()
+    conn.execute('UPDATE users SET password = ? WHERE phone = ?', (hashed, phone))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Password reset successfully'})
+
+
 
 if __name__ == '__main__':
     app.run(port=5000)

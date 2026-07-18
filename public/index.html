@@ -21,6 +21,8 @@
     .btn-blue:hover { background: #1565C0; }
     .btn-orange { background: #F57C00; }
     .btn-orange:hover { background: #E65100; }
+    .btn-gray { background: #757575; }
+    .btn-gray:hover { background: #616161; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f0f0f0; }
@@ -34,21 +36,73 @@
     .tab.active { background: #4CAF50; color: white; }
     .auth-box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
     #userInfo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    #error { font-size: 14px; margin-top: 5px; }
+    .msg { font-size: 14px; margin-top: 5px; }
+    .link-btn { background: none; border: none; color: #1976D2; cursor: pointer; font-size: 14px; padding: 0; text-decoration: underline; }
   </style>
 </head>
 <body>
   <h1>📚 Vocabulary App</h1>
 
-  <!-- Auth Section -->
-  <div id="authSection">
+  <!-- Login Section -->
+  <div id="loginSection">
     <div class="auth-box">
-      <h2>Login / Register</h2>
-      <input id="phone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
-      <input id="password" type="password" placeholder="Enter password" />
+      <h2>Login</h2>
+      <input id="loginPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
+      <input id="loginPassword" type="password" placeholder="Enter password" />
       <button onclick="login()">Login</button>
-      <button class="btn-blue" onclick="register()" style="margin-left:10px;">Register</button>
-      <p id="error"></p>
+      <br/><br/>
+      <button class="link-btn" onclick="showSection('registerSection')">New user? Register</button>
+      &nbsp;|&nbsp;
+      <button class="link-btn" onclick="showSection('forgotSection')">Forgot Password?</button>
+      <p id="loginMsg" class="msg"></p>
+    </div>
+  </div>
+
+  <!-- Register Section -->
+  <div id="registerSection" class="hidden">
+    <div class="auth-box">
+      <h2>Register</h2>
+      <!-- Step 1: Enter phone -->
+      <div id="regStep1">
+        <input id="regPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
+        <button onclick="sendRegOTP()">Send OTP</button>
+        <br/><br/>
+        <button class="link-btn" onclick="showSection('loginSection')">Already registered? Login</button>
+        <p id="regMsg1" class="msg"></p>
+      </div>
+      <!-- Step 2: Enter OTP and password -->
+      <div id="regStep2" class="hidden">
+        <p>OTP sent to your phone!</p>
+        <input id="regOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
+        <input id="regPassword" type="password" placeholder="Create password" />
+        <input id="regPassword2" type="password" placeholder="Confirm password" />
+        <button onclick="verifyRegister()">Register</button>
+        <p id="regMsg2" class="msg"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Forgot Password Section -->
+  <div id="forgotSection" class="hidden">
+    <div class="auth-box">
+      <h2>Forgot Password</h2>
+      <!-- Step 1: Enter phone -->
+      <div id="forgotStep1">
+        <input id="forgotPhone" placeholder="Enter registered phone number" maxlength="10" type="tel" />
+        <button onclick="sendForgotOTP()">Send OTP</button>
+        <br/><br/>
+        <button class="link-btn" onclick="showSection('loginSection')">Back to Login</button>
+        <p id="forgotMsg1" class="msg"></p>
+      </div>
+      <!-- Step 2: Enter OTP and new password -->
+      <div id="forgotStep2" class="hidden">
+        <p>OTP sent to your phone!</p>
+        <input id="forgotOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
+        <input id="newPassword" type="password" placeholder="Enter new password" />
+        <input id="newPassword2" type="password" placeholder="Confirm new password" />
+        <button onclick="resetPassword()">Reset Password</button>
+        <p id="forgotMsg2" class="msg"></p>
+      </div>
     </div>
   </div>
 
@@ -126,40 +180,125 @@
     let phone = localStorage.getItem('vocab_phone');
     let practiceWords = [];
     let currentIndex = 0;
+    let regPhoneNum = '';
+    let forgotPhoneNum = '';
 
     if (token) showApp();
 
-    async function register() {
-      const p = document.getElementById('phone').value.trim();
-      const pwd = document.getElementById('password').value;
-      if (!p || !pwd) { showError('Please enter phone and password', 'red'); return; }
-      const res = await fetch('/api/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: p, password: pwd })
+    // Show/hide sections
+    function showSection(sectionId) {
+      ['loginSection', 'registerSection', 'forgotSection', 'appSection'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
       });
-      const data = await res.json();
-      if (data.error) { showError(data.error, 'red'); }
-      else { showError('Registered successfully! Please login.', 'green'); }
+      document.getElementById(sectionId).classList.remove('hidden');
     }
 
+    // Login
     async function login() {
-      const p = document.getElementById('phone').value.trim();
-      const pwd = document.getElementById('password').value;
-      if (!p || !pwd) { showError('Please enter phone and password', 'red'); return; }
+      const p = document.getElementById('loginPhone').value.trim();
+      const pwd = document.getElementById('loginPassword').value;
+      if (!p || !pwd) { showMsg('loginMsg', 'Please enter phone and password', 'red'); return; }
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: p, password: pwd })
       });
       const data = await res.json();
-      if (data.error) { showError(data.error, 'red'); }
+      if (data.error) { showMsg('loginMsg', data.error, 'red'); }
       else {
         token = data.token;
         phone = data.phone;
         localStorage.setItem('vocab_token', token);
         localStorage.setItem('vocab_phone', phone);
         showApp();
+      }
+    }
+
+    // Send OTP for registration
+    async function sendRegOTP() {
+      const p = document.getElementById('regPhone').value.trim();
+      if (!p || p.length !== 10) { showMsg('regMsg1', 'Enter valid 10 digit phone number', 'red'); return; }
+      showMsg('regMsg1', 'Sending OTP...', 'blue');
+      const res = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: p })
+      });
+      const data = await res.json();
+      if (data.error) { showMsg('regMsg1', data.error, 'red'); }
+      else {
+        regPhoneNum = p;
+        document.getElementById('regStep1').classList.add('hidden');
+        document.getElementById('regStep2').classList.remove('hidden');
+        showMsg('regMsg2', 'OTP sent successfully!', 'green');
+      }
+    }
+
+    // Verify OTP and register
+    async function verifyRegister() {
+      const otp = document.getElementById('regOTP').value.trim();
+      const pwd = document.getElementById('regPassword').value;
+      const pwd2 = document.getElementById('regPassword2').value;
+      if (!otp || !pwd) { showMsg('regMsg2', 'Please fill all fields', 'red'); return; }
+      if (pwd !== pwd2) { showMsg('regMsg2', 'Passwords do not match', 'red'); return; }
+      const res = await fetch('/api/verify-register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: regPhoneNum, otp, password: pwd })
+      });
+      const data = await res.json();
+      if (data.error) { showMsg('regMsg2', data.error, 'red'); }
+      else {
+        showMsg('regMsg2', 'Registered successfully! Please login.', 'green');
+        setTimeout(() => {
+          document.getElementById('regStep1').classList.remove('hidden');
+          document.getElementById('regStep2').classList.add('hidden');
+          showSection('loginSection');
+        }, 2000);
+      }
+    }
+
+    // Send OTP for forgot password
+    async function sendForgotOTP() {
+      const p = document.getElementById('forgotPhone').value.trim();
+      if (!p || p.length !== 10) { showMsg('forgotMsg1', 'Enter valid 10 digit phone number', 'red'); return; }
+      showMsg('forgotMsg1', 'Sending OTP...', 'blue');
+      const res = await fetch('/api/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: p })
+      });
+      const data = await res.json();
+      if (data.error) { showMsg('forgotMsg1', data.error, 'red'); }
+      else {
+        forgotPhoneNum = p;
+        document.getElementById('forgotStep1').classList.add('hidden');
+        document.getElementById('forgotStep2').classList.remove('hidden');
+        showMsg('forgotMsg2', 'OTP sent successfully!', 'green');
+      }
+    }
+
+    // Reset password
+    async function resetPassword() {
+      const otp = document.getElementById('forgotOTP').value.trim();
+      const pwd = document.getElementById('newPassword').value;
+      const pwd2 = document.getElementById('newPassword2').value;
+      if (!otp || !pwd) { showMsg('forgotMsg2', 'Please fill all fields', 'red'); return; }
+      if (pwd !== pwd2) { showMsg('forgotMsg2', 'Passwords do not match', 'red'); return; }
+      const res = await fetch('/api/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: forgotPhoneNum, otp, password: pwd })
+      });
+      const data = await res.json();
+      if (data.error) { showMsg('forgotMsg2', data.error, 'red'); }
+      else {
+        showMsg('forgotMsg2', 'Password reset successfully! Please login.', 'green');
+        setTimeout(() => {
+          document.getElementById('forgotStep1').classList.remove('hidden');
+          document.getElementById('forgotStep2').classList.add('hidden');
+          showSection('loginSection');
+        }, 2000);
       }
     }
 
@@ -172,13 +311,11 @@
       document.getElementById('practiceStart').classList.remove('hidden');
       document.getElementById('practiceArea').classList.add('hidden');
       document.getElementById('practiceComplete').classList.add('hidden');
-      document.getElementById('authSection').classList.remove('hidden');
-      document.getElementById('appSection').classList.add('hidden');
+      showSection('loginSection');
     }
 
     function showApp() {
-      document.getElementById('authSection').classList.add('hidden');
-      document.getElementById('appSection').classList.remove('hidden');
+      showSection('appSection');
       document.getElementById('welcomeUser').textContent = phone;
       ['addTab', 'listTab', 'practiceTab'].forEach(id => {
         document.getElementById(id).classList.add('hidden');
@@ -188,8 +325,8 @@
       document.querySelectorAll('.tab')[0].classList.add('active');
     }
 
-    function showError(msg, color) {
-      const e = document.getElementById('error');
+    function showMsg(id, msg, color) {
+      const e = document.getElementById(id);
       e.textContent = msg;
       e.style.color = color;
     }
