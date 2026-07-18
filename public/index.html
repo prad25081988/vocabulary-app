@@ -36,6 +36,7 @@
     #userInfo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
     .msg { font-size: 14px; margin-top: 5px; }
     .link-btn { background: none; border: none; color: #1976D2; cursor: pointer; font-size: 14px; padding: 0; text-decoration: underline; }
+    .otp-display { background: #e8f5e9; padding: 10px; border-radius: 5px; color: #2e7d32; font-weight: bold; margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -62,14 +63,13 @@
       <h2>Register</h2>
       <div id="regStep1">
         <input id="regPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
-        <input id="regEmail" placeholder="Enter email address" type="email" />
-        <button onclick="sendRegOTP()">Send OTP to Email</button>
+        <button onclick="sendRegOTP()">Send OTP</button>
         <br/><br/>
         <button class="link-btn" onclick="showSection('loginSection')">Already registered? Login</button>
         <p id="regMsg1" class="msg"></p>
       </div>
       <div id="regStep2" class="hidden">
-        <p style="background:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32;" id="regOtpMsg"></p>
+        <p class="otp-display" id="regOtpDisplay"></p>
         <input id="regOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
         <input id="regPassword" type="password" placeholder="Create password" />
         <input id="regPassword2" type="password" placeholder="Confirm password" />
@@ -84,14 +84,14 @@
     <div class="auth-box">
       <h2>Forgot Password</h2>
       <div id="forgotStep1">
-        <input id="forgotEmail" placeholder="Enter registered email" type="email" />
-        <button onclick="sendForgotOTP()">Send OTP to Email</button>
+        <input id="forgotPhone" placeholder="Enter registered phone number" maxlength="10" type="tel" />
+        <button onclick="sendForgotOTP()">Send OTP</button>
         <br/><br/>
         <button class="link-btn" onclick="showSection('loginSection')">Back to Login</button>
         <p id="forgotMsg1" class="msg"></p>
       </div>
       <div id="forgotStep2" class="hidden">
-        <p style="background:#e8f5e9; padding:10px; border-radius:5px; color:#2e7d32;" id="forgotOtpMsg"></p>
+        <p class="otp-display" id="forgotOtpDisplay"></p>
         <input id="forgotOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
         <input id="newPassword" type="password" placeholder="Enter new password" />
         <input id="newPassword2" type="password" placeholder="Confirm new password" />
@@ -107,13 +107,11 @@
       <span>👋 Hi, <strong id="welcomeUser"></strong>!</span>
       <button class="btn-red" onclick="logout()">Logout</button>
     </div>
-
     <div class="tabs">
       <button class="tab active" onclick="showTab('addTab', this)">Add Words</button>
       <button class="tab" onclick="showTab('listTab', this)">Word List</button>
       <button class="tab" onclick="showTab('practiceTab', this)">Practice</button>
     </div>
-
     <div id="addTab" class="card">
       <h2>Add New Word</h2>
       <input id="wordInput" placeholder="Enter word..." />
@@ -121,17 +119,13 @@
       <button onclick="addWord()">Add Word</button>
       <p id="addMessage"></p>
     </div>
-
     <div id="listTab" class="card hidden">
       <h2>All Words (<span id="wordCount">0</span>)</h2>
       <table>
-        <thead>
-          <tr><th>Word</th><th>Meaning</th><th>Action</th></tr>
-        </thead>
+        <thead><tr><th>Word</th><th>Meaning</th><th>Action</th></tr></thead>
         <tbody id="wordList"></tbody>
       </table>
     </div>
-
     <div id="practiceTab" class="card hidden">
       <div id="practiceStart">
         <h2>Practice Mode</h2>
@@ -159,8 +153,8 @@
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/service-worker.js')
-          .then(reg => console.log('Service Worker registered'))
-          .catch(err => console.log('Service Worker error:', err));
+          .then(reg => console.log('SW registered'))
+          .catch(err => console.log('SW error:', err));
       });
     }
   </script>
@@ -171,32 +165,30 @@
     let practiceWords = [];
     let currentIndex = 0;
     let regPhoneNum = '';
-    let regEmailAddr = '';
-    let forgotEmailAddr = '';
+    let forgotPhoneNum = '';
 
     if (token) showApp();
 
-    function showSection(sectionId) {
-      ['loginSection', 'registerSection', 'forgotSection', 'appSection'].forEach(id => {
-        document.getElementById(id).classList.add('hidden');
+    function showSection(id) {
+      ['loginSection','registerSection','forgotSection','appSection'].forEach(s => {
+        document.getElementById(s).classList.add('hidden');
       });
-      document.getElementById(sectionId).classList.remove('hidden');
+      document.getElementById(id).classList.remove('hidden');
     }
 
     async function login() {
       const p = document.getElementById('loginPhone').value.trim();
       const pwd = document.getElementById('loginPassword').value;
-      if (!p || !pwd) { showMsg('loginMsg', 'Please enter phone and password', 'red'); return; }
+      if (!p || !pwd) { showMsg('loginMsg','Please enter phone and password','red'); return; }
       const res = await fetch('/api/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: p, password: pwd })
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({phone: p, password: pwd})
       });
       const data = await res.json();
       if (data.error) { showMsg('loginMsg', data.error, 'red'); }
       else {
-        token = data.token;
-        phone = data.phone;
+        token = data.token; phone = data.phone;
         localStorage.setItem('vocab_token', token);
         localStorage.setItem('vocab_phone', phone);
         showApp();
@@ -205,23 +197,20 @@
 
     async function sendRegOTP() {
       const p = document.getElementById('regPhone').value.trim();
-      const e = document.getElementById('regEmail').value.trim();
-      if (!p || p.length !== 10) { showMsg('regMsg1', 'Enter valid 10 digit phone number', 'red'); return; }
-      if (!e || !e.includes('@')) { showMsg('regMsg1', 'Enter valid email address', 'red'); return; }
-      showMsg('regMsg1', 'Sending OTP...', 'blue');
+      if (!p || p.length !== 10) { showMsg('regMsg1','Enter valid 10 digit phone number','red'); return; }
+      showMsg('regMsg1','Sending OTP...','blue');
       const res = await fetch('/api/send-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: p, email: e })
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({phone: p})
       });
       const data = await res.json();
       if (data.error) { showMsg('regMsg1', data.error, 'red'); }
       else {
         regPhoneNum = p;
-        regEmailAddr = e;
         document.getElementById('regStep1').classList.add('hidden');
         document.getElementById('regStep2').classList.remove('hidden');
-        document.getElementById('regOtpMsg').textContent = data.message;
+        document.getElementById('regOtpDisplay').textContent = data.message;
       }
     }
 
@@ -229,17 +218,17 @@
       const otp = document.getElementById('regOTP').value.trim();
       const pwd = document.getElementById('regPassword').value;
       const pwd2 = document.getElementById('regPassword2').value;
-      if (!otp || !pwd) { showMsg('regMsg2', 'Please fill all fields', 'red'); return; }
-      if (pwd !== pwd2) { showMsg('regMsg2', 'Passwords do not match', 'red'); return; }
+      if (!otp || !pwd) { showMsg('regMsg2','Please fill all fields','red'); return; }
+      if (pwd !== pwd2) { showMsg('regMsg2','Passwords do not match','red'); return; }
       const res = await fetch('/api/verify-register', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: regPhoneNum, email: regEmailAddr, otp, password: pwd })
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({phone: regPhoneNum, otp, password: pwd})
       });
       const data = await res.json();
       if (data.error) { showMsg('regMsg2', data.error, 'red'); }
       else {
-        showMsg('regMsg2', 'Registered successfully! Please login.', 'green');
+        showMsg('regMsg2','Registered successfully! Please login.','green');
         setTimeout(() => {
           document.getElementById('regStep1').classList.remove('hidden');
           document.getElementById('regStep2').classList.add('hidden');
@@ -249,21 +238,21 @@
     }
 
     async function sendForgotOTP() {
-      const e = document.getElementById('forgotEmail').value.trim();
-      if (!e || !e.includes('@')) { showMsg('forgotMsg1', 'Enter valid email address', 'red'); return; }
-      showMsg('forgotMsg1', 'Sending OTP...', 'blue');
+      const p = document.getElementById('forgotPhone').value.trim();
+      if (!p || p.length !== 10) { showMsg('forgotMsg1','Enter valid 10 digit phone number','red'); return; }
+      showMsg('forgotMsg1','Sending OTP...','blue');
       const res = await fetch('/api/forgot-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: e })
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({phone: p})
       });
       const data = await res.json();
       if (data.error) { showMsg('forgotMsg1', data.error, 'red'); }
       else {
-        forgotEmailAddr = e;
+        forgotPhoneNum = p;
         document.getElementById('forgotStep1').classList.add('hidden');
         document.getElementById('forgotStep2').classList.remove('hidden');
-        document.getElementById('forgotOtpMsg').textContent = data.message;
+        document.getElementById('forgotOtpDisplay').textContent = data.message;
       }
     }
 
@@ -271,17 +260,17 @@
       const otp = document.getElementById('forgotOTP').value.trim();
       const pwd = document.getElementById('newPassword').value;
       const pwd2 = document.getElementById('newPassword2').value;
-      if (!otp || !pwd) { showMsg('forgotMsg2', 'Please fill all fields', 'red'); return; }
-      if (pwd !== pwd2) { showMsg('forgotMsg2', 'Passwords do not match', 'red'); return; }
+      if (!otp || !pwd) { showMsg('forgotMsg2','Please fill all fields','red'); return; }
+      if (pwd !== pwd2) { showMsg('forgotMsg2','Passwords do not match','red'); return; }
       const res = await fetch('/api/reset-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: forgotEmailAddr, otp, password: pwd })
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({phone: forgotPhoneNum, otp, password: pwd})
       });
       const data = await res.json();
       if (data.error) { showMsg('forgotMsg2', data.error, 'red'); }
       else {
-        showMsg('forgotMsg2', 'Password reset successfully! Please login.', 'green');
+        showMsg('forgotMsg2','Password reset successfully! Please login.','green');
         setTimeout(() => {
           document.getElementById('forgotStep1').classList.remove('hidden');
           document.getElementById('forgotStep2').classList.add('hidden');
@@ -293,9 +282,7 @@
     function logout() {
       localStorage.removeItem('vocab_token');
       localStorage.removeItem('vocab_phone');
-      token = null;
-      practiceWords = [];
-      currentIndex = 0;
+      token = null; practiceWords = []; currentIndex = 0;
       document.getElementById('practiceStart').classList.remove('hidden');
       document.getElementById('practiceArea').classList.add('hidden');
       document.getElementById('practiceComplete').classList.add('hidden');
@@ -305,9 +292,7 @@
     function showApp() {
       showSection('appSection');
       document.getElementById('welcomeUser').textContent = phone;
-      ['addTab', 'listTab', 'practiceTab'].forEach(id => {
-        document.getElementById(id).classList.add('hidden');
-      });
+      ['addTab','listTab','practiceTab'].forEach(id => document.getElementById(id).classList.add('hidden'));
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.getElementById('addTab').classList.remove('hidden');
       document.querySelectorAll('.tab')[0].classList.add('active');
@@ -315,14 +300,11 @@
 
     function showMsg(id, msg, color) {
       const e = document.getElementById(id);
-      e.textContent = msg;
-      e.style.color = color;
+      e.textContent = msg; e.style.color = color;
     }
 
     function showTab(tabId, btn) {
-      ['addTab', 'listTab', 'practiceTab'].forEach(id => {
-        document.getElementById(id).classList.add('hidden');
-      });
+      ['addTab','listTab','practiceTab'].forEach(id => document.getElementById(id).classList.add('hidden'));
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.getElementById(tabId).classList.remove('hidden');
       btn.classList.add('active');
@@ -339,8 +321,8 @@
       }
       await fetch('/api/words', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': token },
-        body: JSON.stringify({ word, meaning })
+        headers: {'Content-Type':'application/json','Authorization':token},
+        body: JSON.stringify({word, meaning})
       });
       document.getElementById('wordInput').value = '';
       document.getElementById('meaningInput').value = '';
@@ -350,7 +332,7 @@
     }
 
     async function loadWords() {
-      const res = await fetch('/api/words', { headers: { 'Authorization': token } });
+      const res = await fetch('/api/words', {headers: {'Authorization':token}});
       const words = await res.json();
       document.getElementById('wordCount').textContent = words.length;
       const tbody = document.getElementById('wordList');
@@ -361,30 +343,20 @@
       }
       words.forEach(w => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td><strong>${w.word}</strong></td>
-          <td>${w.meaning}</td>
-          <td><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>
-        `;
+        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
         tbody.appendChild(tr);
       });
     }
 
     async function deleteWord(id) {
-      await fetch(`/api/words/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': token }
-      });
+      await fetch(`/api/words/${id}`, {method:'DELETE', headers:{'Authorization':token}});
       loadWords();
     }
 
     async function startPractice() {
-      const res = await fetch('/api/practice', { headers: { 'Authorization': token } });
+      const res = await fetch('/api/practice', {headers:{'Authorization':token}});
       practiceWords = await res.json();
-      if (practiceWords.length === 0) {
-        alert('No words added yet! Please add some words first.');
-        return;
-      }
+      if (practiceWords.length === 0) { alert('No words added yet!'); return; }
       currentIndex = 0;
       document.getElementById('practiceStart').classList.add('hidden');
       document.getElementById('practiceComplete').classList.add('hidden');
@@ -412,10 +384,7 @@
       }
     }
 
-    function nextWord() {
-      currentIndex++;
-      showWord();
-    }
+    function nextWord() { currentIndex++; showWord(); }
 
     function finishPractice() {
       document.getElementById('practiceArea').classList.add('hidden');
