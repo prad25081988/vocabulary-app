@@ -3,6 +3,7 @@ import sqlite3
 import random
 import bcrypt
 import jwt
+import os
 from functools import wraps
 
 app = Flask(__name__)
@@ -52,7 +53,7 @@ def authenticate(f):
 
 @app.route('/')
 def home():
-    return send_from_directory('public', 'index.html')
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'index.html')
 
 # Register with phone
 @app.route('/api/register', methods=['POST'])
