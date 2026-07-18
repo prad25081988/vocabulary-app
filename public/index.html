@@ -2,6 +2,12 @@
 <html>
 <head>
   <title>Vocabulary App</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#4CAF50">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="VocabApp">
+  <link rel="apple-touch-icon" href="/icon.png">
   <style>
     body { font-family: Arial; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
     h1 { color: #333; text-align: center; }
@@ -104,6 +110,17 @@
     </div>
   </div>
 
+  <!-- PWA Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js')
+          .then(reg => console.log('Service Worker registered'))
+          .catch(err => console.log('Service Worker error:', err));
+      });
+    }
+  </script>
+
   <script>
     let token = localStorage.getItem('vocab_token');
     let phone = localStorage.getItem('vocab_phone');
@@ -146,7 +163,7 @@
       }
     }
 
-  function logout() {
+    function logout() {
       localStorage.removeItem('vocab_token');
       localStorage.removeItem('vocab_phone');
       token = null;
@@ -159,12 +176,10 @@
       document.getElementById('appSection').classList.add('hidden');
     }
 
-   function showApp() {
+    function showApp() {
       document.getElementById('authSection').classList.add('hidden');
       document.getElementById('appSection').classList.remove('hidden');
       document.getElementById('welcomeUser').textContent = phone;
-      
-      // Reset to Add Words tab by default
       ['addTab', 'listTab', 'practiceTab'].forEach(id => {
         document.getElementById(id).classList.add('hidden');
       });

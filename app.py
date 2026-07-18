@@ -135,5 +135,18 @@ def practice():
     random.shuffle(words_list)
     return jsonify(words_list)
 
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'manifest.json')
+
+@app.route('/service-worker.js')
+def service_worker():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'service-worker.js')
+
+
+@app.route('/icon.png')
+def icon():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'icon.png')
+
 if __name__ == '__main__':
     app.run(port=5000)
