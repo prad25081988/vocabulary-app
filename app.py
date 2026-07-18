@@ -1,10 +1,11 @@
 from flask import Flask, request, jsonify, send_from_directory
-import sqlite3
 import random
 import string
 import bcrypt
 import jwt
 import os
+import psycopg2
+import psycopg2.extras
 from functools import wraps
 
 app = Flask(__name__)
@@ -12,29 +13,29 @@ SECRET = 'vocabsecretkey123'
 otp_store = {}
 
 def get_db():
-    conn = sqlite3.connect('vocabulary.db')
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
     return conn
 
 def init_db():
     conn = get_db()
-    conn.execute('''
+    cur = conn.cursor()
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             phone TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL
         )
     ''')
-    conn.execute('''
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS words (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             word TEXT NOT NULL,
             meaning TEXT NOT NULL,
-            user_id INTEGER,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            user_id INTEGER REFERENCES users(id)
         )
     ''')
     conn.commit()
+    cur.close()
     conn.close()
 
 init_db()
@@ -76,7 +77,10 @@ def send_otp_route():
     if len(phone) != 10 or not phone.isdigit():
         return jsonify({'error': 'Enter valid 10 digit phone number'}), 400
     conn = get_db()
-    user = conn.execute('SELECT * FROM users WHERE phone = ?', (phone,)).fetchone()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    user = cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    user = cur.fetchone()
+    cur.close()
     conn.close()
     if user:
         return jsonify({'error': 'Phone number already registered'}), 400
@@ -96,12 +100,15 @@ def verify_register():
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
     try:
         conn = get_db()
-        conn.execute('INSERT INTO users (phone, password) VALUES (?, ?)', (phone, hashed))
+        cur = conn.cursor()
+        cur.execute('INSERT INTO users (phone, password) VALUES (%s, %s)', (phone, hashed.decode('utf-8')))
         conn.commit()
+        cur.close()
         conn.close()
         return jsonify({'message': 'Registered successfully'})
-    except:
-        return jsonify({'error': 'Registration failed'}), 400
+    except Exception as e:
+        print("Register error:", str(e))
+        return jsonify({'error': 'Phone number already registered'}), 400
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -109,11 +116,14 @@ def login():
     phone = data['phone']
     password = data['password']
     conn = get_db()
-    user = conn.execute('SELECT * FROM users WHERE phone = ?', (phone,)).fetchone()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    user = cur.fetchone()
+    cur.close()
     conn.close()
     if not user:
         return jsonify({'error': 'Phone number not registered'}), 400
-    if not bcrypt.checkpw(password.encode('utf-8'), user['password']):
+    if not bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
         return jsonify({'error': 'Invalid password'}), 400
     token = jwt.encode({'id': user['id'], 'phone': phone}, SECRET, algorithm='HS256')
     return jsonify({'token': token, 'phone': phone})
@@ -123,7 +133,10 @@ def forgot_password():
     data = request.json
     phone = data['phone']
     conn = get_db()
-    user = conn.execute('SELECT * FROM users WHERE phone = ?', (phone,)).fetchone()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    user = cur.fetchone()
+    cur.close()
     conn.close()
     if not user:
         return jsonify({'error': 'Phone number not registered'}), 400
@@ -142,8 +155,10 @@ def reset_password():
     del otp_store[phone]
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
     conn = get_db()
-    conn.execute('UPDATE users SET password = ? WHERE phone = ?', (hashed, phone))
+    cur = conn.cursor()
+    cur.execute('UPDATE users SET password = %s WHERE phone = %s', (hashed.decode('utf-8'), phone))
     conn.commit()
+    cur.close()
     conn.close()
     return jsonify({'message': 'Password reset successfully'})
 
@@ -151,7 +166,10 @@ def reset_password():
 @authenticate
 def get_words():
     conn = get_db()
-    words = conn.execute('SELECT * FROM words WHERE user_id = ?', (request.user['id'],)).fetchall()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM words WHERE user_id = %s', (request.user['id'],))
+    words = cur.fetchall()
+    cur.close()
     conn.close()
     return jsonify([dict(w) for w in words])
 
@@ -160,9 +178,11 @@ def get_words():
 def add_word():
     data = request.json
     conn = get_db()
-    conn.execute('INSERT INTO words (word, meaning, user_id) VALUES (?, ?, ?)',
+    cur = conn.cursor()
+    cur.execute('INSERT INTO words (word, meaning, user_id) VALUES (%s, %s, %s)',
                 (data['word'], data['meaning'], request.user['id']))
     conn.commit()
+    cur.close()
     conn.close()
     return jsonify({'message': 'Word added successfully'})
 
@@ -170,8 +190,10 @@ def add_word():
 @authenticate
 def delete_word(id):
     conn = get_db()
-    conn.execute('DELETE FROM words WHERE id = ? AND user_id = ?', (id, request.user['id']))
+    cur = conn.cursor()
+    cur.execute('DELETE FROM words WHERE id = %s AND user_id = %s', (id, request.user['id']))
     conn.commit()
+    cur.close()
     conn.close()
     return jsonify({'message': 'Word deleted successfully'})
 
@@ -179,7 +201,10 @@ def delete_word(id):
 @authenticate
 def practice():
     conn = get_db()
-    words = conn.execute('SELECT * FROM words WHERE user_id = ?', (request.user['id'],)).fetchall()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM words WHERE user_id = %s', (request.user['id'],))
+    words = cur.fetchall()
+    cur.close()
     conn.close()
     words_list = [dict(w) for w in words]
     random.shuffle(words_list)
