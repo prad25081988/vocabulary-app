@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
 import random
 import string
 import bcrypt
@@ -7,10 +7,24 @@ import os
 import psycopg2
 import psycopg2.extras
 from functools import wraps
+from dotenv import load_dotenv
+from authlib.integrations.flask_client import OAuth
+
+load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('FLASK_SECRET', 'someflasksecretkey123')
 SECRET = 'vocabsecretkey123'
 otp_store = {}
+
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.environ.get('GOOGLE_CLIENT_ID'),
+    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'}
+)
 
 def get_db():
     conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
@@ -22,10 +36,17 @@ def init_db():
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
-            phone TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL
+            phone TEXT UNIQUE,
+            email TEXT UNIQUE,
+            password TEXT,
+            auth_provider TEXT DEFAULT 'local'
         )
     ''')
+    # Safe upgrades for a table that already existed before Google login was added
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'")
+    cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL")
+    cur.execute("ALTER TABLE users ALTER COLUMN phone DROP NOT NULL")
     cur.execute('''
         CREATE TABLE IF NOT EXISTS words (
             id SERIAL PRIMARY KEY,
@@ -70,6 +91,41 @@ def service_worker():
 def icon():
     return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'icon.png')
 
+# ---------- GOOGLE LOGIN ----------
+
+@app.route('/login/google')
+def google_login():
+    redirect_uri = url_for('google_callback', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route('/login/google/callback')
+def google_callback():
+    token = google.authorize_access_token()
+    user_info = token.get('userinfo')
+    if not user_info or not user_info.get('email'):
+        return redirect('/?error=google_login_failed')
+
+    email = user_info['email']
+
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE email = %s', (email,))
+    user = cur.fetchone()
+    if not user:
+        cur.execute(
+            'INSERT INTO users (email, auth_provider) VALUES (%s, %s) RETURNING *',
+            (email, 'google')
+        )
+        user = cur.fetchone()
+        conn.commit()
+    cur.close()
+    conn.close()
+
+    jwt_token = jwt.encode({'id': user['id'], 'identifier': email}, SECRET, algorithm='HS256')
+    return redirect(f'/?token={jwt_token}&identifier={email}')
+
+# ---------- EXISTING PHONE/PASSWORD LOGIN (unchanged, still works) ----------
+
 @app.route('/api/send-otp', methods=['POST'])
 def send_otp_route():
     data = request.json
@@ -78,7 +134,7 @@ def send_otp_route():
         return jsonify({'error': 'Enter valid 10 digit phone number'}), 400
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    user = cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
     user = cur.fetchone()
     cur.close()
     conn.close()
@@ -101,7 +157,10 @@ def verify_register():
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute('INSERT INTO users (phone, password) VALUES (%s, %s)', (phone, hashed.decode('utf-8')))
+        cur.execute(
+            'INSERT INTO users (phone, password, auth_provider) VALUES (%s, %s, %s)',
+            (phone, hashed.decode('utf-8'), 'local')
+        )
         conn.commit()
         cur.close()
         conn.close()
@@ -121,12 +180,12 @@ def login():
     user = cur.fetchone()
     cur.close()
     conn.close()
-    if not user:
+    if not user or not user['password']:
         return jsonify({'error': 'Phone number not registered'}), 400
     if not bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
         return jsonify({'error': 'Invalid password'}), 400
-    token = jwt.encode({'id': user['id'], 'phone': phone}, SECRET, algorithm='HS256')
-    return jsonify({'token': token, 'phone': phone})
+    token = jwt.encode({'id': user['id'], 'identifier': phone}, SECRET, algorithm='HS256')
+    return jsonify({'token': token, 'identifier': phone})
 
 @app.route('/api/forgot-password', methods=['POST'])
 def forgot_password():
@@ -161,6 +220,8 @@ def reset_password():
     cur.close()
     conn.close()
     return jsonify({'message': 'Password reset successfully'})
+
+# ---------- WORDS (unchanged) ----------
 
 @app.route('/api/words', methods=['GET'])
 @authenticate

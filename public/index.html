@@ -49,6 +49,10 @@
       <input id="loginPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
       <input id="loginPassword" type="password" placeholder="Enter password" />
       <button onclick="login()">Login</button>
+
+      <br/><br/>
+<button style="background:#DB4437" onclick="window.location.href='/login/google'">Sign in with Google</button>
+
       <br/><br/>
       <button class="link-btn" onclick="showSection('registerSection')">New user? Register</button>
       &nbsp;|&nbsp;
@@ -161,7 +165,7 @@
 
   <script>
     let token = localStorage.getItem('vocab_token');
-    let phone = localStorage.getItem('vocab_phone');
+    let identifier = localStorage.getItem('vocab_identifier');
     let practiceWords = [];
     let currentIndex = 0;
     let regPhoneNum = '';
@@ -169,6 +173,15 @@
 
     if (token) showApp();
 
+    const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('token')) {
+  token = urlParams.get('token');
+  identifier = urlParams.get('identifier');
+  localStorage.setItem('vocab_token', token);
+  localStorage.setItem('vocab_identifier', identifier);
+  window.history.replaceState({}, document.title, '/');
+  showApp();
+}
     function showSection(id) {
       ['loginSection','registerSection','forgotSection','appSection'].forEach(s => {
         document.getElementById(s).classList.add('hidden');
@@ -188,9 +201,9 @@
       const data = await res.json();
       if (data.error) { showMsg('loginMsg', data.error, 'red'); }
       else {
-        token = data.token; phone = data.phone;
-        localStorage.setItem('vocab_token', token);
-        localStorage.setItem('vocab_phone', phone);
+        token = data.token; identifier = data.identifier;
+      localStorage.setItem('vocab_token', token);
+      localStorage.setItem('vocab_identifier', identifier);
         showApp();
       }
     }
@@ -281,7 +294,7 @@
 
     function logout() {
       localStorage.removeItem('vocab_token');
-      localStorage.removeItem('vocab_phone');
+      localStorage.removeItem('vocab_identifier');
       token = null; practiceWords = []; currentIndex = 0;
       document.getElementById('practiceStart').classList.remove('hidden');
       document.getElementById('practiceArea').classList.add('hidden');
@@ -291,7 +304,7 @@
 
     function showApp() {
       showSection('appSection');
-      document.getElementById('welcomeUser').textContent = phone;
+      document.getElementById('welcomeUser').textContent = identifier;
       ['addTab','listTab','practiceTab'].forEach(id => document.getElementById(id).classList.add('hidden'));
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.getElementById('addTab').classList.remove('hidden');
