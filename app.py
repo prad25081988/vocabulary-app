@@ -9,10 +9,12 @@ import psycopg2.extras
 from functools import wraps
 from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.environ.get('FLASK_SECRET', 'someflasksecretkey123')
 SECRET = 'vocabsecretkey123'
 otp_store = {}
