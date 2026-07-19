@@ -4,3 +4,5 @@ pyjwt
 gunicorn
 requests
 psycopg2-binary
+Authlib
+python-dotenv
