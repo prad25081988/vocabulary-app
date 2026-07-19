@@ -4,12 +4,14 @@ import string
 import bcrypt
 import jwt
 import os
+import requests
 import psycopg2
 import psycopg2.extras
 from functools import wraps
 from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
 from werkzeug.middleware.proxy_fix import ProxyFix
+from datetime import date
 
 load_dotenv()
 
@@ -18,6 +20,75 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 app.secret_key = os.environ.get('FLASK_SECRET', 'someflasksecretkey123')
 SECRET = 'vocabsecretkey123'
 otp_store = {}
+
+# ---------- DAILY WORDS: READ FROM words_list.txt, AUTO-FETCH MEANING + EXAMPLE ----------
+# To add or change words: just edit words_list.txt (one word per line) and push.
+# No Python code changes needed. Meanings and examples are looked up automatically.
+WORDS_FILE_PATH = os.path.join(os.path.dirname(__file__), 'words_list.txt')
+daily_words_cache = {'date': None, 'words': []}
+
+def load_words_from_file():
+    try:
+        with open(WORDS_FILE_PATH, 'r') as f:
+            words = [line.strip() for line in f if line.strip()]
+        return words
+    except Exception as e:
+        print('words_list.txt read error:', str(e))
+        return []
+
+def fetch_word_definition(word):
+    try:
+        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=6)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        meanings = data[0].get('meanings', [])
+        if not meanings:
+            return None
+        definitions = meanings[0].get('definitions', [])
+        if not definitions:
+            return None
+        meaning = definitions[0].get('definition', '')
+        example = definitions[0].get('example', '')
+        if not meaning:
+            return None
+        if not example:
+            example = f'Try using "{word}" in a sentence of your own!'
+        return {'word': word.capitalize(), 'meaning': meaning, 'example': example}
+    except Exception:
+        return None
+
+def get_daily_words():
+    today = date.today()
+    if daily_words_cache['date'] == today and daily_words_cache['words']:
+        return daily_words_cache['words']
+
+    all_words = load_words_from_file()
+    if not all_words:
+        return []
+
+    group_size = 5
+    total_groups = max(len(all_words) // group_size, 1)
+    day_index = today.toordinal() % total_groups
+    picks = all_words[day_index * group_size: day_index * group_size + group_size]
+    if len(picks) < group_size:
+        picks += all_words[:group_size - len(picks)]
+
+    result = []
+    for w in picks:
+        info = fetch_word_definition(w)
+        if info:
+            result.append(info)
+        else:
+            result.append({
+                'word': w.capitalize(),
+                'meaning': 'Definition not found — check the spelling in words_list.txt',
+                'example': ''
+            })
+
+    daily_words_cache['date'] = today
+    daily_words_cache['words'] = result
+    return result
 
 oauth = OAuth(app)
 google = oauth.register(
@@ -225,6 +296,10 @@ def reset_password():
 
 # ---------- WORDS (unchanged) ----------
 
+@app.route('/api/daily-words', methods=['GET'])
+def daily_words():
+    return jsonify(get_daily_words())
+
 @app.route('/api/words', methods=['GET'])
 @authenticate
 def get_words():
@@ -242,12 +317,13 @@ def add_word():
     data = request.json
     conn = get_db()
     cur = conn.cursor()
-    cur.execute('INSERT INTO words (word, meaning, user_id) VALUES (%s, %s, %s)',
+    cur.execute('INSERT INTO words (word, meaning, user_id) VALUES (%s, %s, %s) RETURNING id',
                 (data['word'], data['meaning'], request.user['id']))
+    new_id = cur.fetchone()[0]
     conn.commit()
     cur.close()
     conn.close()
-    return jsonify({'message': 'Word added successfully'})
+    return jsonify({'message': 'Word added successfully', 'id': new_id})
 
 @app.route('/api/words/<int:id>', methods=['DELETE'])
 @authenticate
