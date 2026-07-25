@@ -145,6 +145,7 @@
       <div id="practiceArea" class="hidden practice-card">
         <div class="progress">Word <span id="currentNum">1</span> of <span id="totalNum">0</span></div>
         <div class="practice-word" id="practiceWord"></div>
+        <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
         <button class="btn-orange" onclick="revealMeaning()">Reveal Meaning</button>
         <div class="practice-meaning hidden" id="practiceMeaning"></div>
         <br/><br/>
@@ -369,9 +370,23 @@
       }
       words.forEach(w => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
+        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button> <button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
         tbody.appendChild(tr);
       });
+    }
+
+    async function editWord(id, currentWord, currentMeaning) {
+      const newWord = prompt('Edit word:', currentWord);
+      if (newWord === null) return;
+      const newMeaning = prompt('Edit meaning:', currentMeaning);
+      if (newMeaning === null) return;
+      if (!newWord.trim() || !newMeaning.trim()) { alert('Word and meaning cannot be empty'); return; }
+      await fetch(`/api/words/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json','Authorization':token},
+        body: JSON.stringify({word: newWord.trim(), meaning: newMeaning.trim()})
+      });
+      loadWords();
     }
 
     async function deleteWord(id) {
@@ -399,6 +414,23 @@
       document.getElementById('practiceMeaning').classList.add('hidden');
       document.getElementById('nextBtn').classList.add('hidden');
       document.getElementById('finishBtn').classList.add('hidden');
+    }
+
+    async function editPracticeWord() {
+      const w = practiceWords[currentIndex];
+      const newWord = prompt('Edit word:', w.word);
+      if (newWord === null) return;
+      const newMeaning = prompt('Edit meaning:', w.meaning);
+      if (newMeaning === null) return;
+      if (!newWord.trim() || !newMeaning.trim()) { alert('Word and meaning cannot be empty'); return; }
+      await fetch(`/api/words/${w.id}`, {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json','Authorization':token},
+        body: JSON.stringify({word: newWord.trim(), meaning: newMeaning.trim()})
+      });
+      w.word = newWord.trim();
+      w.meaning = newMeaning.trim();
+      showWord();
     }
 
     function revealMeaning() {

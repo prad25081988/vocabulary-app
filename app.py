@@ -17,8 +17,8 @@ load_dotenv()
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-app.secret_key = os.environ.get('FLASK_SECRET', 'someflasksecretkey123')
-SECRET = 'vocabsecretkey123'
+app.secret_key = os.environ['FLASK_SECRET']
+SECRET = os.environ['OTP_SECRET']
 otp_store = {}
 
 # ---------- DAILY WORDS: READ FROM words_list.txt, AUTO-FETCH MEANING + EXAMPLE ----------
@@ -294,7 +294,7 @@ def reset_password():
     conn.close()
     return jsonify({'message': 'Password reset successfully'})
 
-# ---------- WORDS (unchanged) ----------
+# ---------- WORDS (unchanged, plus new PUT edit endpoint) ----------
 
 @app.route('/api/daily-words', methods=['GET'])
 def daily_words():
@@ -335,6 +335,23 @@ def delete_word(id):
     cur.close()
     conn.close()
     return jsonify({'message': 'Word deleted successfully'})
+
+@app.route('/api/words/<int:id>', methods=['PUT'])
+@authenticate
+def update_word(id):
+    data = request.json
+    word = data.get('word', '').strip()
+    meaning = data.get('meaning', '').strip()
+    if not word or not meaning:
+        return jsonify({'error': 'Word and meaning are required'}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('UPDATE words SET word = %s, meaning = %s WHERE id = %s AND user_id = %s',
+                (word, meaning, id, request.user['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Word updated successfully'})
 
 @app.route('/api/practice', methods=['GET'])
 @authenticate
