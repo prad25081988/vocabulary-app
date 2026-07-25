@@ -161,6 +161,7 @@
         <div class="practice-word" id="practiceWord"></div>
         <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
         <button class="btn-orange" id="revealBtn" onclick="revealAnswer()">Reveal Meaning</button>
+        <button class="btn-blue" onclick="showWordDetails()">More Details</button>
         <div class="practice-meaning hidden" id="practiceMeaning"></div>
         <br/><br/>
         <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
@@ -189,6 +190,19 @@
       <textarea id="editMeaningInput" placeholder="Meaning" rows="3"></textarea>
       <button class="btn-blue" onclick="submitEdit()">Save</button>
       <button class="btn-red" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Word Details Modal (Practice tab) -->
+  <div id="detailsModal" class="hidden edit-modal-overlay">
+    <div class="edit-modal-box" style="text-align:left; max-height:80vh; overflow-y:auto;">
+      <h2 id="detailsWord" style="margin-top:0;"></h2>
+      <p id="detailsPhonetic" style="color:#888; font-style:italic; margin-top:-8px;"></p>
+      <button class="btn-blue" id="detailsAudioBtn" style="display:none; margin-bottom:12px;" onclick="playDetailsAudio()">🔊 Play pronunciation</button>
+      <p id="detailsMeaning" style="font-size:16px; color:#333;"></p>
+      <p id="detailsOrigin" style="font-size:13px; color:#999;"></p>
+      <div id="detailsFullContent"></div>
+      <button class="btn-red" onclick="closeDetailsModal()">Close</button>
     </div>
   </div>
 
@@ -471,6 +485,95 @@
         headers: {'Content-Type':'application/json','Authorization':token},
         body: JSON.stringify({session_size: size})
       });
+    }
+
+    function buildMeaningSentence(word, meaning) {
+      const cleanMeaning = meaning.trim().replace(/\.$/, '');
+      const lowerMeaning = cleanMeaning.charAt(0).toLowerCase() + cleanMeaning.slice(1);
+      const displayWord = word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      return `The word "${displayWord}" means ${lowerMeaning}.`;
+    }
+
+    function renderWordDetails(data) {
+      document.getElementById('detailsOrigin').textContent = data.origin ? `Origin: ${data.origin}` : '';
+
+      const container = document.getElementById('detailsFullContent');
+      container.innerHTML = '';
+
+      if (!data.meanings || data.meanings.length === 0) {
+        container.innerHTML = '<p style="color:#999;">No additional dictionary details found for this word.</p>';
+        return;
+      }
+
+      data.meanings.forEach(m => {
+        const posDiv = document.createElement('div');
+        posDiv.style.marginBottom = '14px';
+
+        const posTitle = document.createElement('p');
+        posTitle.innerHTML = `<strong style="color:#1976D2;">${m.partOfSpeech || 'General'}</strong>`;
+        posDiv.appendChild(posTitle);
+
+        const ol = document.createElement('ol');
+        ol.style.paddingLeft = '20px';
+        m.definitions.forEach(d => {
+          const li = document.createElement('li');
+          li.style.marginBottom = '8px';
+          let html = d.definition;
+          if (d.example) {
+            html += `<br><span style="color:#999; font-style:italic;">"${d.example}"</span>`;
+          }
+          li.innerHTML = html;
+          ol.appendChild(li);
+        });
+        posDiv.appendChild(ol);
+
+        if (m.synonyms && m.synonyms.length > 0) {
+          const syn = document.createElement('p');
+          syn.style.fontSize = '13px';
+          syn.innerHTML = `<strong>Synonyms:</strong> ${m.synonyms.join(', ')}`;
+          posDiv.appendChild(syn);
+        }
+        if (m.antonyms && m.antonyms.length > 0) {
+          const ant = document.createElement('p');
+          ant.style.fontSize = '13px';
+          ant.innerHTML = `<strong>Antonyms:</strong> ${m.antonyms.join(', ')}`;
+          posDiv.appendChild(ant);
+        }
+        container.appendChild(posDiv);
+      });
+    }
+
+    let currentDetailsAudioUrl = null;
+
+    async function showWordDetails() {
+      const w = practiceWords[currentIndex];
+      document.getElementById('detailsWord').textContent = w.word;
+      document.getElementById('detailsMeaning').textContent = buildMeaningSentence(w.word, w.meaning);
+      document.getElementById('detailsPhonetic').textContent = 'Loading...';
+      document.getElementById('detailsOrigin').textContent = '';
+      document.getElementById('detailsFullContent').innerHTML = '';
+      document.getElementById('detailsAudioBtn').style.display = 'none';
+      currentDetailsAudioUrl = null;
+      document.getElementById('detailsModal').classList.remove('hidden');
+
+      const res = await fetch(`/api/word-details?word=${encodeURIComponent(w.word)}`, {headers:{'Authorization':token}});
+      const data = await res.json();
+      document.getElementById('detailsPhonetic').textContent = data.phonetic || '';
+      currentDetailsAudioUrl = data.audio || null;
+      document.getElementById('detailsAudioBtn').style.display = currentDetailsAudioUrl ? 'inline-block' : 'none';
+
+      renderWordDetails(data);
+    }
+
+    function playDetailsAudio() {
+      if (currentDetailsAudioUrl) {
+        const audio = new Audio(currentDetailsAudioUrl);
+        audio.play();
+      }
+    }
+
+    function closeDetailsModal() {
+      document.getElementById('detailsModal').classList.add('hidden');
     }
 
     function backToPracticeStart() {

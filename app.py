@@ -463,6 +463,62 @@ def update_practice_size():
     conn.close()
     return jsonify({'message': 'Practice session size updated', 'session_size': size})
 
+@app.route('/api/word-details', methods=['GET'])
+@authenticate
+def word_details():
+    word = request.args.get('word', '').strip()
+    if not word:
+        return jsonify({'error': 'Word is required'}), 400
+    try:
+        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=6)
+        if resp.status_code != 200:
+            return jsonify({'word': word.capitalize(), 'found': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
+
+        data = resp.json()
+        phonetic = None
+        audio = None
+        origin = None
+        meanings_out = []
+
+        for entry in data:
+            if not phonetic and entry.get('phonetic'):
+                phonetic = entry.get('phonetic')
+            if not origin and entry.get('origin'):
+                origin = entry.get('origin')
+            for ph in entry.get('phonetics', []):
+                if not phonetic and ph.get('text'):
+                    phonetic = ph.get('text')
+                if not audio and ph.get('audio'):
+                    audio = ph.get('audio')
+
+            for m in entry.get('meanings', []):
+                defs_out = []
+                for d in m.get('definitions', [])[:5]:
+                    defs_out.append({
+                        'definition': d.get('definition', ''),
+                        'example': d.get('example', ''),
+                        'synonyms': d.get('synonyms', [])[:5],
+                        'antonyms': d.get('antonyms', [])[:5]
+                    })
+                meanings_out.append({
+                    'partOfSpeech': m.get('partOfSpeech', ''),
+                    'definitions': defs_out,
+                    'synonyms': m.get('synonyms', [])[:5],
+                    'antonyms': m.get('antonyms', [])[:5]
+                })
+
+        return jsonify({
+            'word': word.capitalize(),
+            'found': True,
+            'phonetic': phonetic,
+            'audio': audio,
+            'origin': origin,
+            'meanings': meanings_out
+        })
+    except Exception as e:
+        print('word-details error:', str(e))
+        return jsonify({'word': word.capitalize(), 'found': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
+
 @app.route('/api/practice', methods=['GET'])
 @authenticate
 def practice():
