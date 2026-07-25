@@ -21,11 +21,29 @@ app.secret_key = os.environ['FLASK_SECRET']
 SECRET = os.environ['OTP_SECRET']
 otp_store = {}
 
-# ---------- DAILY WORDS: READ FROM words_list.txt, AUTO-FETCH MEANING + EXAMPLE ----------
-# To add or change words: just edit words_list.txt (one word per line) and push.
-# No Python code changes needed. Meanings and examples are looked up automatically.
+# ---------- DAILY WORDS ----------
+# Primary source: the word bank of PRIMARY_USER_EMAIL (words they've added themselves).
+# Backup source: words_list.txt (used only when the primary account doesn't have
+# enough words yet). As soon as the account has 5+ words, it switches back to
+# using the account automatically — no manual toggle needed.
+PRIMARY_USER_EMAIL = 'prad25081988@gmail.com'
 WORDS_FILE_PATH = os.path.join(os.path.dirname(__file__), 'words_list.txt')
 daily_words_cache = {'date': None, 'words': []}
+
+def get_primary_user_word_bank():
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT id FROM users WHERE email = %s', (PRIMARY_USER_EMAIL,))
+    user = cur.fetchone()
+    if not user:
+        cur.close()
+        conn.close()
+        return []
+    cur.execute('SELECT word, meaning FROM words WHERE user_id = %s ORDER BY id', (user['id'],))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [dict(r) for r in rows]
 
 def load_words_from_file():
     try:
@@ -63,28 +81,49 @@ def get_daily_words():
     if daily_words_cache['date'] == today and daily_words_cache['words']:
         return daily_words_cache['words']
 
-    all_words = load_words_from_file()
-    if not all_words:
-        return []
-
     group_size = 5
-    total_groups = max(len(all_words) // group_size, 1)
-    day_index = today.toordinal() % total_groups
-    picks = all_words[day_index * group_size: day_index * group_size + group_size]
-    if len(picks) < group_size:
-        picks += all_words[:group_size - len(picks)]
-
+    day_index = today.toordinal()
     result = []
-    for w in picks:
-        info = fetch_word_definition(w)
-        if info:
-            result.append(info)
-        else:
+
+    # ---- Primary source: the user's own word bank ----
+    # Meaning always comes from the user's own database entry (never overwritten).
+    # Example sentence is looked up from the dictionary API just to fill the
+    # "used in a sentence" line — if the API has nothing, a simple placeholder
+    # sentence is used instead so the example line is never blank.
+    user_words = get_primary_user_word_bank()
+    if len(user_words) >= group_size:
+        n = len(user_words)
+        start = (day_index * group_size) % n
+        picks = [user_words[(start + i) % n] for i in range(group_size)]
+        for p in picks:
+            dict_info = fetch_word_definition(p['word'])
+            example = dict_info['example'] if dict_info and dict_info.get('example') else f'Try using "{p["word"]}" in a sentence of your own!'
             result.append({
-                'word': w.capitalize(),
-                'meaning': 'Definition not found — check the spelling in words_list.txt',
-                'example': ''
+                'word': p['word'].capitalize(),
+                'meaning': p['meaning'],
+                'example': example
             })
+
+    # ---- Backup source: words_list.txt, only fills whatever is still short ----
+    if len(result) < group_size:
+        needed = group_size - len(result)
+        notepad_words = load_words_from_file()
+        if notepad_words:
+            total_groups = max(len(notepad_words) // group_size, 1)
+            n_index = day_index % total_groups
+            fallback_picks = notepad_words[n_index * group_size: n_index * group_size + needed]
+            if len(fallback_picks) < needed:
+                fallback_picks += notepad_words[:needed - len(fallback_picks)]
+            for w in fallback_picks:
+                info = fetch_word_definition(w)
+                if info:
+                    result.append(info)
+                else:
+                    result.append({
+                        'word': w.capitalize(),
+                        'meaning': 'Definition not found — check the spelling in words_list.txt',
+                        'example': ''
+                    })
 
     daily_words_cache['date'] = today
     daily_words_cache['words'] = result
