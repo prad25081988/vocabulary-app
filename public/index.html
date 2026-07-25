@@ -147,9 +147,10 @@
       </div>
       <div id="practiceArea" class="hidden practice-card">
         <div class="progress">Word <span id="currentNum">1</span> of <span id="totalNum">0</span></div>
+        <div class="progress" id="practicePrompt" style="font-weight:bold; color:#1976D2;"></div>
         <div class="practice-word" id="practiceWord"></div>
         <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
-        <button class="btn-orange" onclick="revealMeaning()">Reveal Meaning</button>
+        <button class="btn-orange" id="revealBtn" onclick="revealAnswer()">Reveal Meaning</button>
         <div class="practice-meaning hidden" id="practiceMeaning"></div>
         <br/><br/>
         <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
@@ -446,6 +447,11 @@
       const res = await fetch('/api/practice', {headers:{'Authorization':token}});
       practiceWords = await res.json();
       if (practiceWords.length === 0) { alert('No words added yet!'); return; }
+      // Randomly decide, per word, whether to show the word (guess the meaning)
+      // or show the meaning (guess the word). Re-rolled every time practice starts.
+      practiceWords.forEach(w => {
+        w.mode = Math.random() < 0.5 ? 'word' : 'meaning';
+      });
       currentIndex = 0;
       document.getElementById('practiceStart').classList.add('hidden');
       document.getElementById('practiceComplete').classList.add('hidden');
@@ -457,14 +463,25 @@
     function showWord() {
       const w = practiceWords[currentIndex];
       document.getElementById('currentNum').textContent = currentIndex + 1;
-      document.getElementById('practiceWord').textContent = w.word;
-      document.getElementById('practiceMeaning').textContent = w.meaning;
+
+      if (w.mode === 'word') {
+        document.getElementById('practicePrompt').textContent = 'Guess the meaning:';
+        document.getElementById('practiceWord').textContent = w.word;
+        document.getElementById('practiceMeaning').textContent = w.meaning;
+        document.getElementById('revealBtn').textContent = 'Reveal Meaning';
+      } else {
+        document.getElementById('practicePrompt').textContent = 'Guess the word:';
+        document.getElementById('practiceWord').textContent = w.meaning;
+        document.getElementById('practiceMeaning').textContent = w.word;
+        document.getElementById('revealBtn').textContent = 'Reveal Word';
+      }
+
       document.getElementById('practiceMeaning').classList.add('hidden');
       document.getElementById('nextBtn').classList.add('hidden');
       document.getElementById('finishBtn').classList.add('hidden');
     }
 
-    function revealMeaning() {
+    function revealAnswer() {
       document.getElementById('practiceMeaning').classList.remove('hidden');
       if (currentIndex < practiceWords.length - 1) {
         document.getElementById('nextBtn').classList.remove('hidden');
