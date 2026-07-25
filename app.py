@@ -209,6 +209,7 @@ def init_db():
         )
     ''')
     cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS last_shown_date DATE")
+    cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS shown_count INTEGER DEFAULT 0")
     conn.commit()
     cur.close()
     conn.close()
@@ -437,15 +438,71 @@ def update_word(id):
 @app.route('/api/practice', methods=['GET'])
 @authenticate
 def practice():
-    conn = get_db()
-    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute('SELECT * FROM words WHERE user_id = %s', (request.user['id'],))
-    words = cur.fetchall()
-    cur.close()
-    conn.close()
-    words_list = [dict(w) for w in words]
+    words_list = get_practice_session(request.user['id'])
     random.shuffle(words_list)
     return jsonify(words_list)
+
+def get_practice_session(user_id, session_size=20):
+    # Each practice session mixes two groups so that words needing more
+    # practice show up more often, without ever fully freezing out older
+    # or already-practiced words:
+    #   - 70% of the session: the least-shown words (shown_count ASC), so
+    #     brand new words (shown_count=0) and under-practiced ones surface first.
+    #   - 30% of the session: a genuinely random sample from the ENTIRE word
+    #     bank, regardless of shown_count, so well-practiced words still get
+    #     periodically refreshed instead of disappearing from rotation forever.
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT COUNT(*) AS cnt FROM words WHERE user_id = %s', (user_id,))
+    total = cur.fetchone()['cnt']
+    size = min(session_size, total)
+    if size == 0:
+        cur.close()
+        conn.close()
+        return []
+
+    priority_count = min(max(round(size * 0.7), 1), size)
+    random_count = size - priority_count
+
+    cur.execute('''
+        SELECT id, word, meaning, shown_count FROM words
+        WHERE user_id = %s
+        ORDER BY shown_count ASC, id ASC
+        LIMIT %s
+    ''', (user_id, priority_count))
+    priority_words = cur.fetchall()
+    priority_ids = [w['id'] for w in priority_words]
+
+    remaining_words = []
+    if random_count > 0:
+        if priority_ids:
+            cur.execute('''
+                SELECT id, word, meaning, shown_count FROM words
+                WHERE user_id = %s AND id != ALL(%s)
+                ORDER BY RANDOM()
+                LIMIT %s
+            ''', (user_id, priority_ids, random_count))
+        else:
+            cur.execute('''
+                SELECT id, word, meaning, shown_count FROM words
+                WHERE user_id = %s
+                ORDER BY RANDOM()
+                LIMIT %s
+            ''', (user_id, random_count))
+        remaining_words = cur.fetchall()
+
+    combined = list(priority_words) + list(remaining_words)
+    combined_ids = [w['id'] for w in combined]
+
+    if combined_ids:
+        cur2 = conn.cursor()
+        cur2.execute('UPDATE words SET shown_count = shown_count + 1 WHERE id = ANY(%s)', (combined_ids,))
+        conn.commit()
+        cur2.close()
+
+    cur.close()
+    conn.close()
+    return [dict(w) for w in combined]
 
 if __name__ == '__main__':
     app.run(port=5000)
