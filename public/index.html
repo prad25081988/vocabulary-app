@@ -45,6 +45,9 @@
     .daily-word-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
     .daily-word-left { display: flex; align-items: center; gap: 6px; }
     .daily-word-example { color: #999; font-style: italic; font-size: 14px; margin-top: 6px; }
+    .edit-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+    .edit-modal-box { background: white; padding: 20px; border-radius: 8px; width: 90%; max-width: 400px; }
+    .list-action-cell { white-space: nowrap; display: flex; gap: 6px; }
   </style>
 </head>
 <body>
@@ -165,6 +168,17 @@
     </div>
   </div>
 
+  <!-- Edit Word Modal (shared by Word List and Practice tab) -->
+  <div id="editModal" class="hidden edit-modal-overlay">
+    <div class="edit-modal-box">
+      <h2>Edit Word</h2>
+      <input id="editWordInput" placeholder="Word" />
+      <textarea id="editMeaningInput" placeholder="Meaning" rows="3"></textarea>
+      <button class="btn-blue" onclick="submitEdit()">Save</button>
+      <button class="btn-red" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -182,6 +196,8 @@
     let currentIndex = 0;
     let regPhoneNum = '';
     let forgotPhoneNum = '';
+    let editingContext = null; // 'list' or 'practice'
+    let editingId = null;
 
     if (token) showApp();
 
@@ -370,23 +386,55 @@
       }
       words.forEach(w => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button> <button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
+        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td class="list-action-cell"><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
         tbody.appendChild(tr);
       });
     }
 
-    async function editWord(id, currentWord, currentMeaning) {
-      const newWord = prompt('Edit word:', currentWord);
-      if (newWord === null) return;
-      const newMeaning = prompt('Edit meaning:', currentMeaning);
-      if (newMeaning === null) return;
-      if (!newWord.trim() || !newMeaning.trim()) { alert('Word and meaning cannot be empty'); return; }
-      await fetch(`/api/words/${id}`, {
+    function editWord(id, currentWord, currentMeaning) {
+      editingContext = 'list';
+      editingId = id;
+      document.getElementById('editWordInput').value = currentWord;
+      document.getElementById('editMeaningInput').value = currentMeaning;
+      document.getElementById('editModal').classList.remove('hidden');
+    }
+
+    function editPracticeWord() {
+      const w = practiceWords[currentIndex];
+      editingContext = 'practice';
+      editingId = w.id;
+      document.getElementById('editWordInput').value = w.word;
+      document.getElementById('editMeaningInput').value = w.meaning;
+      document.getElementById('editModal').classList.remove('hidden');
+    }
+
+    function closeEditModal() {
+      document.getElementById('editModal').classList.add('hidden');
+      editingContext = null;
+      editingId = null;
+    }
+
+    async function submitEdit() {
+      const newWord = document.getElementById('editWordInput').value.trim();
+      const newMeaning = document.getElementById('editMeaningInput').value.trim();
+      if (!newWord || !newMeaning) { alert('Word and meaning cannot be empty'); return; }
+
+      await fetch(`/api/words/${editingId}`, {
         method: 'PUT',
         headers: {'Content-Type':'application/json','Authorization':token},
-        body: JSON.stringify({word: newWord.trim(), meaning: newMeaning.trim()})
+        body: JSON.stringify({word: newWord, meaning: newMeaning})
       });
-      loadWords();
+
+      if (editingContext === 'list') {
+        loadWords();
+      } else if (editingContext === 'practice') {
+        const w = practiceWords[currentIndex];
+        w.word = newWord;
+        w.meaning = newMeaning;
+        showWord();
+      }
+
+      closeEditModal();
     }
 
     async function deleteWord(id) {
@@ -414,23 +462,6 @@
       document.getElementById('practiceMeaning').classList.add('hidden');
       document.getElementById('nextBtn').classList.add('hidden');
       document.getElementById('finishBtn').classList.add('hidden');
-    }
-
-    async function editPracticeWord() {
-      const w = practiceWords[currentIndex];
-      const newWord = prompt('Edit word:', w.word);
-      if (newWord === null) return;
-      const newMeaning = prompt('Edit meaning:', w.meaning);
-      if (newMeaning === null) return;
-      if (!newWord.trim() || !newMeaning.trim()) { alert('Word and meaning cannot be empty'); return; }
-      await fetch(`/api/words/${w.id}`, {
-        method: 'PUT',
-        headers: {'Content-Type':'application/json','Authorization':token},
-        body: JSON.stringify({word: newWord.trim(), meaning: newMeaning.trim()})
-      });
-      w.word = newWord.trim();
-      w.meaning = newMeaning.trim();
-      showWord();
     }
 
     function revealMeaning() {
