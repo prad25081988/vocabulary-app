@@ -63,11 +63,20 @@ def fetch_word_definition(word):
         meanings = data[0].get('meanings', [])
         if not meanings:
             return None
-        definitions = meanings[0].get('definitions', [])
-        if not definitions:
-            return None
-        meaning = definitions[0].get('definition', '')
-        example = definitions[0].get('example', '')
+
+        meaning = None
+        example = None
+        for m in meanings:
+            for d in m.get('definitions', []):
+                if meaning is None and d.get('definition'):
+                    meaning = d.get('definition')
+                if not example and d.get('example'):
+                    example = d.get('example')
+                if meaning and example:
+                    break
+            if meaning and example:
+                break
+
         if not meaning:
             return None
         if not example:
