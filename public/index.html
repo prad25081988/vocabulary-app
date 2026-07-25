@@ -165,11 +165,13 @@
         <br/><br/>
         <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
         <button class="btn-red hidden" id="finishBtn" onclick="finishPractice()">Finish</button>
+        <br/><br/>
+        <button class="link-btn" onclick="backToPracticeStart()">← Change session settings</button>
       </div>
       <div id="practiceComplete" class="hidden practice-card">
         <h2>🎉 Practice Complete!</h2>
         <p>You reviewed all words!</p>
-        <button class="btn-blue" onclick="startPractice()">Practice Again</button>
+        <button class="btn-blue" onclick="backToPracticeStart()">Practice Again</button>
       </div>
     </div>
 
@@ -469,6 +471,13 @@
         headers: {'Content-Type':'application/json','Authorization':token},
         body: JSON.stringify({session_size: size})
       });
+    }
+
+    function backToPracticeStart() {
+      document.getElementById('practiceArea').classList.add('hidden');
+      document.getElementById('practiceComplete').classList.add('hidden');
+      document.getElementById('practiceStart').classList.remove('hidden');
+      loadSessionSizeSetting();
     }
 
     async function startPractice() {
