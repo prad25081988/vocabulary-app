@@ -133,6 +133,7 @@
       <input id="wordInput" placeholder="Enter word..." />
       <textarea id="meaningInput" placeholder="Enter meaning..." rows="3"></textarea>
       <button onclick="addWord()">Add Word</button>
+      <button class="btn-blue" onclick="showWordDetailsFromAddTab()">More Details</button>
       <p id="addMessage"></p>
     </div>
     <div id="listTab" class="card hidden">
@@ -164,7 +165,7 @@
         <div class="practice-word" id="practiceWord"></div>
         <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
         <button class="btn-orange" id="revealBtn" onclick="revealAnswer()">Reveal Meaning</button>
-        <button class="btn-blue" onclick="showWordDetails()">More Details</button>
+        <button class="btn-blue" onclick="showWordDetails(practiceWords[currentIndex].word, practiceWords[currentIndex].meaning)">More Details</button>
         <div class="practice-meaning hidden" id="practiceMeaning"></div>
         <br/><br/>
         <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
@@ -405,6 +406,13 @@
       setTimeout(() => document.getElementById('addMessage').textContent = '', 2000);
     }
 
+    function showWordDetailsFromAddTab() {
+      const word = document.getElementById('wordInput').value.trim();
+      if (!word) { alert('Enter a word first'); return; }
+      const meaning = document.getElementById('meaningInput').value.trim();
+      showWordDetails(word, meaning);
+    }
+
     async function loadWords() {
       const res = await fetch('/api/words', {headers: {'Authorization':token}});
       const words = await res.json();
@@ -548,10 +556,9 @@
 
     let currentDetailsAudioUrl = null;
 
-    async function showWordDetails() {
-      const w = practiceWords[currentIndex];
-      document.getElementById('detailsWord').textContent = w.word;
-      document.getElementById('detailsMeaning').textContent = buildMeaningSentence(w.word, w.meaning);
+    async function showWordDetails(word, meaning) {
+      document.getElementById('detailsWord').textContent = word;
+      document.getElementById('detailsMeaning').textContent = meaning ? buildMeaningSentence(word, meaning) : '';
       document.getElementById('detailsPhonetic').textContent = 'Loading...';
       document.getElementById('detailsOrigin').textContent = '';
       document.getElementById('detailsFullContent').innerHTML = '';
@@ -559,7 +566,7 @@
       currentDetailsAudioUrl = null;
       document.getElementById('detailsModal').classList.remove('hidden');
 
-      const res = await fetch(`/api/word-details?word=${encodeURIComponent(w.word)}`, {headers:{'Authorization':token}});
+      const res = await fetch(`/api/word-details?word=${encodeURIComponent(word)}`, {headers:{'Authorization':token}});
       const data = await res.json();
       document.getElementById('detailsPhonetic').textContent = data.phonetic || '';
       currentDetailsAudioUrl = data.audio || null;
@@ -664,8 +671,10 @@
             <button class="daily-add-btn" style="white-space:nowrap; background:${existing ? '#e53935' : '#4CAF50'}; flex-shrink:0;" data-id="${existing ? existing.id : ''}">${existing ? 'Remove' : 'Add'}</button>
           </div>
           ${w.example ? `<div class="daily-word-example">"${w.example}"</div>` : ''}
+          <button class="btn-blue details-btn" style="margin-top:8px; padding:6px 14px; font-size:13px;">More Details</button>
         `;
         div.querySelector('.speak-btn').onclick = () => speakWord(w.word);
+        div.querySelector('.details-btn').onclick = () => showWordDetails(w.word, w.meaning);
         const btn = div.querySelector('.daily-add-btn');
         btn.onclick = () => toggleDailyWord(btn, w.word, w.meaning);
         container.appendChild(div);
