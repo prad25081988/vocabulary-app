@@ -143,6 +143,16 @@
       <div id="practiceStart">
         <h2>Practice Mode</h2>
         <p>Words shown one by one in random order. Guess the meaning before revealing!</p>
+        <div style="margin-bottom:15px; text-align:left;">
+          <label for="sessionSizeSelect" style="display:block; margin-bottom:5px; font-size:14px; color:#555;">Words per practice session:</label>
+          <select id="sessionSizeSelect" onchange="updateSessionSize()">
+            <option value="10">10 words</option>
+            <option value="20">20 words</option>
+            <option value="30">30 words</option>
+            <option value="50">50 words</option>
+            <option value="9999">All my words</option>
+          </select>
+        </div>
         <button class="btn-blue" onclick="startPractice()">Start Practice</button>
       </div>
       <div id="practiceArea" class="hidden practice-card">
@@ -353,6 +363,7 @@
       document.getElementById(tabId).classList.remove('hidden');
       btn.classList.add('active');
       if (tabId === 'listTab') loadWords();
+      if (tabId === 'practiceTab') loadSessionSizeSetting();
     }
 
     async function addWord() {
@@ -441,6 +452,23 @@
     async function deleteWord(id) {
       await fetch(`/api/words/${id}`, {method:'DELETE', headers:{'Authorization':token}});
       loadWords();
+    }
+
+    async function loadSessionSizeSetting() {
+      const res = await fetch('/api/settings/practice-size', {headers:{'Authorization':token}});
+      const data = await res.json();
+      const select = document.getElementById('sessionSizeSelect');
+      const options = Array.from(select.options).map(o => o.value);
+      select.value = options.includes(String(data.session_size)) ? String(data.session_size) : '20';
+    }
+
+    async function updateSessionSize() {
+      const size = parseInt(document.getElementById('sessionSizeSelect').value);
+      await fetch('/api/settings/practice-size', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json','Authorization':token},
+        body: JSON.stringify({session_size: size})
+      });
     }
 
     async function startPractice() {

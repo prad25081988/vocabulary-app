@@ -198,6 +198,7 @@ def init_db():
     # Safe upgrades for a table that already existed before Google login was added
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS practice_session_size INTEGER DEFAULT 20")
     cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL")
     cur.execute("ALTER TABLE users ALTER COLUMN phone DROP NOT NULL")
     cur.execute('''
@@ -435,10 +436,44 @@ def update_word(id):
     conn.close()
     return jsonify({'message': 'Word updated successfully'})
 
+@app.route('/api/settings/practice-size', methods=['GET'])
+@authenticate
+def get_practice_size():
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT practice_session_size FROM users WHERE id = %s', (request.user['id'],))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    size = row['practice_session_size'] if row and row['practice_session_size'] else 20
+    return jsonify({'session_size': size})
+
+@app.route('/api/settings/practice-size', methods=['PUT'])
+@authenticate
+def update_practice_size():
+    data = request.json
+    size = data.get('session_size')
+    if not isinstance(size, int) or size <= 0:
+        return jsonify({'error': 'Session size must be a positive number'}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('UPDATE users SET practice_session_size = %s WHERE id = %s', (size, request.user['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Practice session size updated', 'session_size': size})
+
 @app.route('/api/practice', methods=['GET'])
 @authenticate
 def practice():
-    words_list = get_practice_session(request.user['id'])
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT practice_session_size FROM users WHERE id = %s', (request.user['id'],))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    session_size = row['practice_session_size'] if row and row['practice_session_size'] else 20
+    words_list = get_practice_session(request.user['id'], session_size=session_size)
     random.shuffle(words_list)
     return jsonify(words_list)
 
