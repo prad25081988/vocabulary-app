@@ -60,18 +60,20 @@ def fetch_word_definition(word):
         if resp.status_code != 200:
             return None
         data = resp.json()
-        meanings = data[0].get('meanings', [])
-        if not meanings:
+        if not data:
             return None
 
         meaning = None
         example = None
-        for m in meanings:
-            for d in m.get('definitions', []):
-                if meaning is None and d.get('definition'):
-                    meaning = d.get('definition')
-                if not example and d.get('example'):
-                    example = d.get('example')
+        for entry in data:
+            for m in entry.get('meanings', []):
+                for d in m.get('definitions', []):
+                    if meaning is None and d.get('definition'):
+                        meaning = d.get('definition')
+                    if not example and d.get('example'):
+                        example = d.get('example')
+                    if meaning and example:
+                        break
                 if meaning and example:
                     break
             if meaning and example:
@@ -80,7 +82,8 @@ def fetch_word_definition(word):
         if not meaning:
             return None
         if not example:
-            example = f'Try using "{word}" in a sentence of your own!'
+            clean_meaning = meaning.rstrip('.').lower()
+            example = f'"{word.capitalize()}" means {clean_meaning}.'
         return {'word': word.capitalize(), 'meaning': meaning, 'example': example}
     except Exception:
         return None
