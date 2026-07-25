@@ -1,560 +1,409 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Power Vocab</title>
-  <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#4CAF50">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="PowerVocab">
-  <link rel="apple-touch-icon" href="/icon.png">
-  <style>
-    body { font-family: Arial; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
-    h1 { color: #333; text-align: center; }
-    .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    input, textarea { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
-    button { padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
-    button:hover { background: #45a049; }
-    .btn-red { background: #e53935; }
-    .btn-red:hover { background: #c62828; }
-    .btn-blue { background: #1976D2; }
-    .btn-blue:hover { background: #1565C0; }
-    .btn-orange { background: #F57C00; }
-    .btn-orange:hover { background: #E65100; }
-    .btn-google { background: #DB4437; }
-    .btn-google:hover { background: #C23321; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
-    th { background: #f0f0f0; }
-    .hidden { display: none; }
-    .practice-card { text-align: center; padding: 30px; }
-    .practice-word { font-size: 32px; font-weight: bold; color: #333; margin-bottom: 20px; }
-    .practice-meaning { font-size: 18px; color: #666; margin-bottom: 20px; }
-    .progress { color: #999; font-size: 14px; margin-bottom: 20px; }
-    .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-    .tab { padding: 10px 20px; background: #ddd; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
-    .tab.active { background: #4CAF50; color: white; }
-    .auth-box { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-    #userInfo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .msg { font-size: 14px; margin-top: 5px; }
-    .link-btn { background: none; border: none; color: #1976D2; cursor: pointer; font-size: 14px; padding: 0; text-decoration: underline; }
-    .otp-display { background: #e8f5e9; padding: 10px; border-radius: 5px; color: #2e7d32; font-weight: bold; margin-bottom: 10px; }
-    .speak-btn { background: none; border: 1px solid #1976D2; color: #1976D2; border-radius: 50%; width: 26px; height: 26px; padding: 0; flex-shrink: 0; font-size: 13px; line-height: 1; }
-    .speak-btn:hover { background: #e3f2fd; }
-    .daily-word-card { border: 1px solid #eee; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
-    .daily-word-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-    .daily-word-left { display: flex; align-items: center; gap: 6px; }
-    .daily-word-example { color: #999; font-style: italic; font-size: 14px; margin-top: 6px; }
-    .edit-modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
-    .edit-modal-box { background: white; padding: 20px; border-radius: 8px; width: 90%; max-width: 400px; }
-    .list-action-cell { white-space: nowrap; display: flex; gap: 6px; }
-  </style>
-</head>
-<body>
-  <h1>📚 Power Vocab</h1>
+from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
+import random
+import string
+import bcrypt
+import jwt
+import os
+import requests
+import psycopg2
+import psycopg2.extras
+from functools import wraps
+from dotenv import load_dotenv
+from authlib.integrations.flask_client import OAuth
+from werkzeug.middleware.proxy_fix import ProxyFix
+from datetime import date
 
-  <!-- Login Section -->
-  <div id="loginSection">
-    <div class="auth-box">
-      <h2>Login</h2>
-      <input id="loginPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
-      <input id="loginPassword" type="password" placeholder="Enter password" />
-      <button onclick="login()">Login</button>
-      <br/><br/>
-      <button class="btn-google" onclick="window.location.href='/login/google'">Sign in with Google</button>
-      <br/><br/>
-      <button class="link-btn" onclick="showSection('registerSection')">New user? Register</button>
-      &nbsp;|&nbsp;
-      <button class="link-btn" onclick="showSection('forgotSection')">Forgot Password?</button>
-      <p id="loginMsg" class="msg"></p>
-    </div>
-  </div>
+load_dotenv()
 
-  <!-- Register Section -->
-  <div id="registerSection" class="hidden">
-    <div class="auth-box">
-      <h2>Register</h2>
-      <div id="regStep1">
-        <input id="regPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
-        <button onclick="sendRegOTP()">Send OTP</button>
-        <br/><br/>
-        <button class="link-btn" onclick="showSection('loginSection')">Already registered? Login</button>
-        <p id="regMsg1" class="msg"></p>
-      </div>
-      <div id="regStep2" class="hidden">
-        <p class="otp-display" id="regOtpDisplay"></p>
-        <input id="regOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
-        <input id="regPassword" type="password" placeholder="Create password" />
-        <input id="regPassword2" type="password" placeholder="Confirm password" />
-        <button onclick="verifyRegister()">Register</button>
-        <p id="regMsg2" class="msg"></p>
-      </div>
-    </div>
-  </div>
+app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.secret_key = os.environ['FLASK_SECRET']
+SECRET = os.environ['OTP_SECRET']
+otp_store = {}
 
-  <!-- Forgot Password Section -->
-  <div id="forgotSection" class="hidden">
-    <div class="auth-box">
-      <h2>Forgot Password</h2>
-      <div id="forgotStep1">
-        <input id="forgotPhone" placeholder="Enter registered phone number" maxlength="10" type="tel" />
-        <button onclick="sendForgotOTP()">Send OTP</button>
-        <br/><br/>
-        <button class="link-btn" onclick="showSection('loginSection')">Back to Login</button>
-        <p id="forgotMsg1" class="msg"></p>
-      </div>
-      <div id="forgotStep2" class="hidden">
-        <p class="otp-display" id="forgotOtpDisplay"></p>
-        <input id="forgotOTP" placeholder="Enter 6 digit OTP" maxlength="6" type="tel" />
-        <input id="newPassword" type="password" placeholder="Enter new password" />
-        <input id="newPassword2" type="password" placeholder="Confirm new password" />
-        <button onclick="resetPassword()">Reset Password</button>
-        <p id="forgotMsg2" class="msg"></p>
-      </div>
-    </div>
-  </div>
+# ---------- DAILY WORDS ----------
+# Primary source: the word bank of PRIMARY_USER_EMAIL (words they've added themselves).
+# Backup source: words_list.txt (used only when the primary account doesn't have
+# enough words yet). As soon as the account has 5+ words, it switches back to
+# using the account automatically — no manual toggle needed.
+PRIMARY_USER_EMAIL = 'prad25081988@gmail.com'
+WORDS_FILE_PATH = os.path.join(os.path.dirname(__file__), 'words_list.txt')
+daily_words_cache = {'date': None, 'words': []}
 
-  <!-- Main App Section -->
-  <div id="appSection" class="hidden">
-    <div id="userInfo">
-      <span>👋 Hi, <strong id="welcomeUser"></strong>!</span>
-      <button class="btn-red" onclick="logout()">Logout</button>
-    </div>
-    <div class="tabs">
-      <button class="tab active" onclick="showTab('addTab', this)">Add Words</button>
-      <button class="tab" onclick="showTab('listTab', this)">Word List</button>
-      <button class="tab" onclick="showTab('practiceTab', this)">Practice</button>
-    </div>
-    <div id="addTab" class="card">
-      <h2>Add New Word</h2>
-      <input id="wordInput" placeholder="Enter word..." />
-      <textarea id="meaningInput" placeholder="Enter meaning..." rows="3"></textarea>
-      <button onclick="addWord()">Add Word</button>
-      <p id="addMessage"></p>
-    </div>
-    <div id="listTab" class="card hidden">
-      <h2>All Words (<span id="wordCount">0</span>)</h2>
-      <table>
-        <thead><tr><th>Word</th><th>Meaning</th><th>Action</th></tr></thead>
-        <tbody id="wordList"></tbody>
-      </table>
-    </div>
-    <div id="practiceTab" class="card hidden">
-      <div id="practiceStart">
-        <h2>Practice Mode</h2>
-        <p>Words shown one by one in random order. Guess the meaning before revealing!</p>
-        <button class="btn-blue" onclick="startPractice()">Start Practice</button>
-      </div>
-      <div id="practiceArea" class="hidden practice-card">
-        <div class="progress">Word <span id="currentNum">1</span> of <span id="totalNum">0</span></div>
-        <div class="progress" id="practicePrompt" style="font-weight:bold; color:#1976D2;"></div>
-        <div class="practice-word" id="practiceWord"></div>
-        <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
-        <button class="btn-orange" id="revealBtn" onclick="revealAnswer()">Reveal Meaning</button>
-        <div class="practice-meaning hidden" id="practiceMeaning"></div>
-        <br/><br/>
-        <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
-        <button class="btn-red hidden" id="finishBtn" onclick="finishPractice()">Finish</button>
-      </div>
-      <div id="practiceComplete" class="hidden practice-card">
-        <h2>🎉 Practice Complete!</h2>
-        <p>You reviewed all words!</p>
-        <button class="btn-blue" onclick="startPractice()">Practice Again</button>
-      </div>
-    </div>
+def get_primary_user_word_bank():
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT id FROM users WHERE email = %s', (PRIMARY_USER_EMAIL,))
+    user = cur.fetchone()
+    if not user:
+        cur.close()
+        conn.close()
+        return []
+    cur.execute('SELECT word, meaning FROM words WHERE user_id = %s ORDER BY id', (user['id'],))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [dict(r) for r in rows]
 
-    <div class="card">
-      <h2>📅 Today's 5 Words</h2>
-      <div id="dailyWordsList"></div>
-    </div>
-  </div>
+def load_words_from_file():
+    try:
+        with open(WORDS_FILE_PATH, 'r') as f:
+            words = [line.strip() for line in f if line.strip()]
+        return words
+    except Exception as e:
+        print('words_list.txt read error:', str(e))
+        return []
 
-  <!-- Edit Word Modal (shared by Word List and Practice tab) -->
-  <div id="editModal" class="hidden edit-modal-overlay">
-    <div class="edit-modal-box">
-      <h2>Edit Word</h2>
-      <input id="editWordInput" placeholder="Word" />
-      <textarea id="editMeaningInput" placeholder="Meaning" rows="3"></textarea>
-      <button class="btn-blue" onclick="submitEdit()">Save</button>
-      <button class="btn-red" onclick="closeEditModal()">Cancel</button>
-    </div>
-  </div>
+def fetch_word_definition(word):
+    try:
+        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=6)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        meanings = data[0].get('meanings', [])
+        if not meanings:
+            return None
+        definitions = meanings[0].get('definitions', [])
+        if not definitions:
+            return None
+        meaning = definitions[0].get('definition', '')
+        example = definitions[0].get('example', '')
+        if not meaning:
+            return None
+        if not example:
+            example = f'Try using "{word}" in a sentence of your own!'
+        return {'word': word.capitalize(), 'meaning': meaning, 'example': example}
+    except Exception:
+        return None
 
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/service-worker.js')
-          .then(reg => console.log('SW registered'))
-          .catch(err => console.log('SW error:', err));
-      });
-    }
-  </script>
+def get_daily_words():
+    today = date.today()
+    if daily_words_cache['date'] == today and daily_words_cache['words']:
+        return daily_words_cache['words']
 
-  <script>
-    let token = localStorage.getItem('vocab_token');
-    let identifier = localStorage.getItem('vocab_identifier');
-    let practiceWords = [];
-    let currentIndex = 0;
-    let regPhoneNum = '';
-    let forgotPhoneNum = '';
-    let editingContext = null; // 'list' or 'practice'
-    let editingId = null;
+    group_size = 5
+    day_index = today.toordinal()
+    result = []
 
-    if (token) showApp();
+    # ---- Primary source: the user's own word bank ----
+    # Meaning always comes from the user's own database entry (never overwritten).
+    # Example sentence is looked up from the dictionary API just to fill the
+    # "used in a sentence" line — if the API has nothing, a simple placeholder
+    # sentence is used instead so the example line is never blank.
+    user_words = get_primary_user_word_bank()
+    if len(user_words) >= group_size:
+        n = len(user_words)
+        start = (day_index * group_size) % n
+        picks = [user_words[(start + i) % n] for i in range(group_size)]
+        for p in picks:
+            dict_info = fetch_word_definition(p['word'])
+            example = dict_info['example'] if dict_info and dict_info.get('example') else f'Try using "{p["word"]}" in a sentence of your own!'
+            result.append({
+                'word': p['word'].capitalize(),
+                'meaning': p['meaning'],
+                'example': example
+            })
 
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('token')) {
-      token = urlParams.get('token');
-      identifier = urlParams.get('identifier');
-      localStorage.setItem('vocab_token', token);
-      localStorage.setItem('vocab_identifier', identifier);
-      window.history.replaceState({}, document.title, '/');
-      showApp();
-    }
+    # ---- Backup source: words_list.txt, only fills whatever is still short ----
+    if len(result) < group_size:
+        needed = group_size - len(result)
+        notepad_words = load_words_from_file()
+        if notepad_words:
+            total_groups = max(len(notepad_words) // group_size, 1)
+            n_index = day_index % total_groups
+            fallback_picks = notepad_words[n_index * group_size: n_index * group_size + needed]
+            if len(fallback_picks) < needed:
+                fallback_picks += notepad_words[:needed - len(fallback_picks)]
+            for w in fallback_picks:
+                info = fetch_word_definition(w)
+                if info:
+                    result.append(info)
+                else:
+                    result.append({
+                        'word': w.capitalize(),
+                        'meaning': 'Definition not found — check the spelling in words_list.txt',
+                        'example': ''
+                    })
 
-    function showSection(id) {
-      ['loginSection','registerSection','forgotSection','appSection'].forEach(s => {
-        document.getElementById(s).classList.add('hidden');
-      });
-      document.getElementById(id).classList.remove('hidden');
-    }
+    daily_words_cache['date'] = today
+    daily_words_cache['words'] = result
+    return result
 
-    async function login() {
-      const p = document.getElementById('loginPhone').value.trim();
-      const pwd = document.getElementById('loginPassword').value;
-      if (!p || !pwd) { showMsg('loginMsg','Please enter phone and password','red'); return; }
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({phone: p, password: pwd})
-      });
-      const data = await res.json();
-      if (data.error) { showMsg('loginMsg', data.error, 'red'); }
-      else {
-        token = data.token; identifier = data.identifier;
-        localStorage.setItem('vocab_token', token);
-        localStorage.setItem('vocab_identifier', identifier);
-        showApp();
-      }
-    }
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.environ.get('GOOGLE_CLIENT_ID'),
+    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET'),
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'}
+)
 
-    async function sendRegOTP() {
-      const p = document.getElementById('regPhone').value.trim();
-      if (!p || p.length !== 10) { showMsg('regMsg1','Enter valid 10 digit phone number','red'); return; }
-      showMsg('regMsg1','Sending OTP...','blue');
-      const res = await fetch('/api/send-otp', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({phone: p})
-      });
-      const data = await res.json();
-      if (data.error) { showMsg('regMsg1', data.error, 'red'); }
-      else {
-        regPhoneNum = p;
-        document.getElementById('regStep1').classList.add('hidden');
-        document.getElementById('regStep2').classList.remove('hidden');
-        document.getElementById('regOtpDisplay').textContent = data.message;
-      }
-    }
+def get_db():
+    conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
+    return conn
 
-    async function verifyRegister() {
-      const otp = document.getElementById('regOTP').value.trim();
-      const pwd = document.getElementById('regPassword').value;
-      const pwd2 = document.getElementById('regPassword2').value;
-      if (!otp || !pwd) { showMsg('regMsg2','Please fill all fields','red'); return; }
-      if (pwd !== pwd2) { showMsg('regMsg2','Passwords do not match','red'); return; }
-      const res = await fetch('/api/verify-register', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({phone: regPhoneNum, otp, password: pwd})
-      });
-      const data = await res.json();
-      if (data.error) { showMsg('regMsg2', data.error, 'red'); }
-      else {
-        showMsg('regMsg2','Registered successfully! Please login.','green');
-        setTimeout(() => {
-          document.getElementById('regStep1').classList.remove('hidden');
-          document.getElementById('regStep2').classList.add('hidden');
-          showSection('loginSection');
-        }, 2000);
-      }
-    }
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            phone TEXT UNIQUE,
+            email TEXT UNIQUE,
+            password TEXT,
+            auth_provider TEXT DEFAULT 'local'
+        )
+    ''')
+    # Safe upgrades for a table that already existed before Google login was added
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'")
+    cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL")
+    cur.execute("ALTER TABLE users ALTER COLUMN phone DROP NOT NULL")
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS words (
+            id SERIAL PRIMARY KEY,
+            word TEXT NOT NULL,
+            meaning TEXT NOT NULL,
+            user_id INTEGER REFERENCES users(id)
+        )
+    ''')
+    conn.commit()
+    cur.close()
+    conn.close()
 
-    async function sendForgotOTP() {
-      const p = document.getElementById('forgotPhone').value.trim();
-      if (!p || p.length !== 10) { showMsg('forgotMsg1','Enter valid 10 digit phone number','red'); return; }
-      showMsg('forgotMsg1','Sending OTP...','blue');
-      const res = await fetch('/api/forgot-password', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({phone: p})
-      });
-      const data = await res.json();
-      if (data.error) { showMsg('forgotMsg1', data.error, 'red'); }
-      else {
-        forgotPhoneNum = p;
-        document.getElementById('forgotStep1').classList.add('hidden');
-        document.getElementById('forgotStep2').classList.remove('hidden');
-        document.getElementById('forgotOtpDisplay').textContent = data.message;
-      }
-    }
+init_db()
 
-    async function resetPassword() {
-      const otp = document.getElementById('forgotOTP').value.trim();
-      const pwd = document.getElementById('newPassword').value;
-      const pwd2 = document.getElementById('newPassword2').value;
-      if (!otp || !pwd) { showMsg('forgotMsg2','Please fill all fields','red'); return; }
-      if (pwd !== pwd2) { showMsg('forgotMsg2','Passwords do not match','red'); return; }
-      const res = await fetch('/api/reset-password', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({phone: forgotPhoneNum, otp, password: pwd})
-      });
-      const data = await res.json();
-      if (data.error) { showMsg('forgotMsg2', data.error, 'red'); }
-      else {
-        showMsg('forgotMsg2','Password reset successfully! Please login.','green');
-        setTimeout(() => {
-          document.getElementById('forgotStep1').classList.remove('hidden');
-          document.getElementById('forgotStep2').classList.add('hidden');
-          showSection('loginSection');
-        }, 2000);
-      }
-    }
+def authenticate(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'No token'}), 401
+        try:
+            data = jwt.decode(token, SECRET, algorithms=['HS256'])
+            request.user = data
+        except:
+            return jsonify({'error': 'Invalid token'}), 403
+        return f(*args, **kwargs)
+    return decorated
 
-    function logout() {
-      localStorage.removeItem('vocab_token');
-      localStorage.removeItem('vocab_identifier');
-      token = null; practiceWords = []; currentIndex = 0;
-      document.getElementById('practiceStart').classList.remove('hidden');
-      document.getElementById('practiceArea').classList.add('hidden');
-      document.getElementById('practiceComplete').classList.add('hidden');
-      showSection('loginSection');
-    }
+@app.route('/')
+def home():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'index.html')
 
-    function showApp() {
-      showSection('appSection');
-      document.getElementById('welcomeUser').textContent = identifier;
-      ['addTab','listTab','practiceTab'].forEach(id => document.getElementById(id).classList.add('hidden'));
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.getElementById('addTab').classList.remove('hidden');
-      document.querySelectorAll('.tab')[0].classList.add('active');
-      loadDailyWords();
-    }
+@app.route('/manifest.json')
+def manifest():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'manifest.json')
 
-    function showMsg(id, msg, color) {
-      const e = document.getElementById(id);
-      e.textContent = msg; e.style.color = color;
-    }
+@app.route('/service-worker.js')
+def service_worker():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'service-worker.js')
 
-    function showTab(tabId, btn) {
-      ['addTab','listTab','practiceTab'].forEach(id => document.getElementById(id).classList.add('hidden'));
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.getElementById(tabId).classList.remove('hidden');
-      btn.classList.add('active');
-      if (tabId === 'listTab') loadWords();
-    }
+@app.route('/icon.png')
+def icon():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), 'public'), 'icon.png')
 
-    async function addWord() {
-      const word = document.getElementById('wordInput').value.trim();
-      const meaning = document.getElementById('meaningInput').value.trim();
-      if (!word || !meaning) {
-        document.getElementById('addMessage').textContent = 'Please enter both word and meaning!';
-        document.getElementById('addMessage').style.color = 'red';
-        return;
-      }
-      await fetch('/api/words', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json','Authorization':token},
-        body: JSON.stringify({word, meaning})
-      });
-      document.getElementById('wordInput').value = '';
-      document.getElementById('meaningInput').value = '';
-      document.getElementById('addMessage').textContent = '✅ Word added successfully!';
-      document.getElementById('addMessage').style.color = 'green';
-      setTimeout(() => document.getElementById('addMessage').textContent = '', 2000);
-    }
+# ---------- GOOGLE LOGIN ----------
 
-    async function loadWords() {
-      const res = await fetch('/api/words', {headers: {'Authorization':token}});
-      const words = await res.json();
-      document.getElementById('wordCount').textContent = words.length;
-      const tbody = document.getElementById('wordList');
-      tbody.innerHTML = '';
-      if (words.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">No words added yet</td></tr>';
-        return;
-      }
-      words.forEach(w => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td class="list-action-cell"><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
-        tbody.appendChild(tr);
-      });
-    }
+@app.route('/login/google')
+def google_login():
+    redirect_uri = url_for('google_callback', _external=True)
+    return google.authorize_redirect(redirect_uri)
 
-    function editWord(id, currentWord, currentMeaning) {
-      editingContext = 'list';
-      editingId = id;
-      document.getElementById('editWordInput').value = currentWord;
-      document.getElementById('editMeaningInput').value = currentMeaning;
-      document.getElementById('editModal').classList.remove('hidden');
-    }
+@app.route('/login/google/callback')
+def google_callback():
+    token = google.authorize_access_token()
+    user_info = token.get('userinfo')
+    if not user_info or not user_info.get('email'):
+        return redirect('/?error=google_login_failed')
 
-    function editPracticeWord() {
-      const w = practiceWords[currentIndex];
-      editingContext = 'practice';
-      editingId = w.id;
-      document.getElementById('editWordInput').value = w.word;
-      document.getElementById('editMeaningInput').value = w.meaning;
-      document.getElementById('editModal').classList.remove('hidden');
-    }
+    email = user_info['email']
 
-    function closeEditModal() {
-      document.getElementById('editModal').classList.add('hidden');
-      editingContext = null;
-      editingId = null;
-    }
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE email = %s', (email,))
+    user = cur.fetchone()
+    if not user:
+        cur.execute(
+            'INSERT INTO users (email, auth_provider) VALUES (%s, %s) RETURNING *',
+            (email, 'google')
+        )
+        user = cur.fetchone()
+        conn.commit()
+    cur.close()
+    conn.close()
 
-    async function submitEdit() {
-      const newWord = document.getElementById('editWordInput').value.trim();
-      const newMeaning = document.getElementById('editMeaningInput').value.trim();
-      if (!newWord || !newMeaning) { alert('Word and meaning cannot be empty'); return; }
+    jwt_token = jwt.encode({'id': user['id'], 'identifier': email}, SECRET, algorithm='HS256')
+    return redirect(f'/?token={jwt_token}&identifier={email}')
 
-      await fetch(`/api/words/${editingId}`, {
-        method: 'PUT',
-        headers: {'Content-Type':'application/json','Authorization':token},
-        body: JSON.stringify({word: newWord, meaning: newMeaning})
-      });
+# ---------- EXISTING PHONE/PASSWORD LOGIN (unchanged, still works) ----------
 
-      if (editingContext === 'list') {
-        loadWords();
-      } else if (editingContext === 'practice') {
-        const w = practiceWords[currentIndex];
-        w.word = newWord;
-        w.meaning = newMeaning;
-        showWord();
-      }
+@app.route('/api/send-otp', methods=['POST'])
+def send_otp_route():
+    data = request.json
+    phone = data['phone']
+    if len(phone) != 10 or not phone.isdigit():
+        return jsonify({'error': 'Enter valid 10 digit phone number'}), 400
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    if user:
+        return jsonify({'error': 'Phone number already registered'}), 400
+    otp = ''.join(random.choices(string.digits, k=6))
+    otp_store[phone] = otp
+    return jsonify({'message': f'OTP (Testing mode): {otp}'})
 
-      closeEditModal();
-    }
+@app.route('/api/verify-register', methods=['POST'])
+def verify_register():
+    data = request.json
+    phone = data['phone']
+    otp = data['otp']
+    password = data['password']
+    if phone not in otp_store or otp_store[phone] != otp:
+        return jsonify({'error': 'Invalid or expired OTP'}), 400
+    del otp_store[phone]
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            'INSERT INTO users (phone, password, auth_provider) VALUES (%s, %s, %s)',
+            (phone, hashed.decode('utf-8'), 'local')
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'message': 'Registered successfully'})
+    except Exception as e:
+        print("Register error:", str(e))
+        return jsonify({'error': 'Phone number already registered'}), 400
 
-    async function deleteWord(id) {
-      await fetch(`/api/words/${id}`, {method:'DELETE', headers:{'Authorization':token}});
-      loadWords();
-    }
+@app.route('/api/login', methods=['POST'])
+def login():
+    data = request.json
+    phone = data['phone']
+    password = data['password']
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not user or not user['password']:
+        return jsonify({'error': 'Phone number not registered'}), 400
+    if not bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
+        return jsonify({'error': 'Invalid password'}), 400
+    token = jwt.encode({'id': user['id'], 'identifier': phone}, SECRET, algorithm='HS256')
+    return jsonify({'token': token, 'identifier': phone})
 
-    async function startPractice() {
-      const res = await fetch('/api/practice', {headers:{'Authorization':token}});
-      practiceWords = await res.json();
-      if (practiceWords.length === 0) { alert('No words added yet!'); return; }
-      // Randomly decide, per word, whether to show the word (guess the meaning)
-      // or show the meaning (guess the word). Re-rolled every time practice starts.
-      practiceWords.forEach(w => {
-        w.mode = Math.random() < 0.5 ? 'word' : 'meaning';
-      });
-      currentIndex = 0;
-      document.getElementById('practiceStart').classList.add('hidden');
-      document.getElementById('practiceComplete').classList.add('hidden');
-      document.getElementById('practiceArea').classList.remove('hidden');
-      document.getElementById('totalNum').textContent = practiceWords.length;
-      showWord();
-    }
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    data = request.json
+    phone = data['phone']
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM users WHERE phone = %s', (phone,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not user:
+        return jsonify({'error': 'Phone number not registered'}), 400
+    otp = ''.join(random.choices(string.digits, k=6))
+    otp_store[phone] = otp
+    return jsonify({'message': f'OTP (Testing mode): {otp}'})
 
-    function showWord() {
-      const w = practiceWords[currentIndex];
-      document.getElementById('currentNum').textContent = currentIndex + 1;
+@app.route('/api/reset-password', methods=['POST'])
+def reset_password():
+    data = request.json
+    phone = data['phone']
+    otp = data['otp']
+    password = data['password']
+    if phone not in otp_store or otp_store[phone] != otp:
+        return jsonify({'error': 'Invalid or expired OTP'}), 400
+    del otp_store[phone]
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('UPDATE users SET password = %s WHERE phone = %s', (hashed.decode('utf-8'), phone))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Password reset successfully'})
 
-      if (w.mode === 'word') {
-        document.getElementById('practicePrompt').textContent = 'Guess the meaning:';
-        document.getElementById('practiceWord').textContent = w.word;
-        document.getElementById('practiceMeaning').textContent = w.meaning;
-        document.getElementById('revealBtn').textContent = 'Reveal Meaning';
-      } else {
-        document.getElementById('practicePrompt').textContent = 'Guess the word:';
-        document.getElementById('practiceWord').textContent = w.meaning;
-        document.getElementById('practiceMeaning').textContent = w.word;
-        document.getElementById('revealBtn').textContent = 'Reveal Word';
-      }
+# ---------- WORDS (unchanged, plus new PUT edit endpoint) ----------
 
-      document.getElementById('practiceMeaning').classList.add('hidden');
-      document.getElementById('nextBtn').classList.add('hidden');
-      document.getElementById('finishBtn').classList.add('hidden');
-    }
+@app.route('/api/daily-words', methods=['GET'])
+def daily_words():
+    return jsonify(get_daily_words())
 
-    function revealAnswer() {
-      document.getElementById('practiceMeaning').classList.remove('hidden');
-      if (currentIndex < practiceWords.length - 1) {
-        document.getElementById('nextBtn').classList.remove('hidden');
-      } else {
-        document.getElementById('finishBtn').classList.remove('hidden');
-      }
-    }
+@app.route('/api/words', methods=['GET'])
+@authenticate
+def get_words():
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM words WHERE user_id = %s', (request.user['id'],))
+    words = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify([dict(w) for w in words])
 
-    function nextWord() { currentIndex++; showWord(); }
+@app.route('/api/words', methods=['POST'])
+@authenticate
+def add_word():
+    data = request.json
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('INSERT INTO words (word, meaning, user_id) VALUES (%s, %s, %s) RETURNING id',
+                (data['word'], data['meaning'], request.user['id']))
+    new_id = cur.fetchone()[0]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Word added successfully', 'id': new_id})
 
-    function finishPractice() {
-      document.getElementById('practiceArea').classList.add('hidden');
-      document.getElementById('practiceComplete').classList.remove('hidden');
-    }
+@app.route('/api/words/<int:id>', methods=['DELETE'])
+@authenticate
+def delete_word(id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('DELETE FROM words WHERE id = %s AND user_id = %s', (id, request.user['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Word deleted successfully'})
 
-    async function loadDailyWords() {
-      const [dailyRes, wordsRes] = await Promise.all([
-        fetch('/api/daily-words'),
-        fetch('/api/words', {headers: {'Authorization': token}})
-      ]);
-      const dailyWords = await dailyRes.json();
-      const myWords = await wordsRes.json();
+@app.route('/api/words/<int:id>', methods=['PUT'])
+@authenticate
+def update_word(id):
+    data = request.json
+    word = data.get('word', '').strip()
+    meaning = data.get('meaning', '').strip()
+    if not word or not meaning:
+        return jsonify({'error': 'Word and meaning are required'}), 400
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('UPDATE words SET word = %s, meaning = %s WHERE id = %s AND user_id = %s',
+                (word, meaning, id, request.user['id']))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Word updated successfully'})
 
-      const container = document.getElementById('dailyWordsList');
-      container.innerHTML = '';
+@app.route('/api/practice', methods=['GET'])
+@authenticate
+def practice():
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT * FROM words WHERE user_id = %s', (request.user['id'],))
+    words = cur.fetchall()
+    cur.close()
+    conn.close()
+    words_list = [dict(w) for w in words]
+    random.shuffle(words_list)
+    return jsonify(words_list)
 
-      dailyWords.forEach(w => {
-        const existing = myWords.find(mw => mw.word.toLowerCase() === w.word.toLowerCase());
-        const div = document.createElement('div');
-        div.className = 'daily-word-card';
-        div.innerHTML = `
-          <div class="daily-word-top">
-            <div class="daily-word-left">
-              <button class="speak-btn">🔊</button>
-              <span><strong>${w.word}</strong> - ${w.meaning}</span>
-            </div>
-            <button class="daily-add-btn" style="white-space:nowrap; background:${existing ? '#e53935' : '#4CAF50'}; flex-shrink:0;" data-id="${existing ? existing.id : ''}">${existing ? 'Remove' : 'Add'}</button>
-          </div>
-          ${w.example ? `<div class="daily-word-example">"${w.example}"</div>` : ''}
-        `;
-        div.querySelector('.speak-btn').onclick = () => speakWord(w.word);
-        const btn = div.querySelector('.daily-add-btn');
-        btn.onclick = () => toggleDailyWord(btn, w.word, w.meaning);
-        container.appendChild(div);
-      });
-    }
-
-    async function toggleDailyWord(btn, word, meaning) {
-      const currentId = btn.getAttribute('data-id');
-      if (currentId) {
-        await fetch(`/api/words/${currentId}`, {method: 'DELETE', headers: {'Authorization': token}});
-        btn.setAttribute('data-id', '');
-        btn.textContent = 'Add';
-        btn.style.background = '#4CAF50';
-      } else {
-        const res = await fetch('/api/words', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json', 'Authorization': token},
-          body: JSON.stringify({word, meaning})
-        });
-        const data = await res.json();
-        btn.setAttribute('data-id', data.id);
-        btn.textContent = 'Remove';
-        btn.style.background = '#e53935';
-      }
-    }
-
-    function speakWord(word) {
-      const utterance = new SpeechSynthesisUtterance(word);
-      utterance.lang = 'en-US';
-      utterance.rate = 0.9;
-      speechSynthesis.speak(utterance);
-    }
-  </script>
-</body>
-</html>
+if __name__ == '__main__':
+    app.run(port=5000)
