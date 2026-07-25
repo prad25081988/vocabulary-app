@@ -30,20 +30,48 @@ PRIMARY_USER_EMAIL = 'prad25081988@gmail.com'
 WORDS_FILE_PATH = os.path.join(os.path.dirname(__file__), 'words_list.txt')
 daily_words_cache = {'date': None, 'words': []}
 
-def get_primary_user_word_bank():
+def get_primary_user_id():
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute('SELECT id FROM users WHERE email = %s', (PRIMARY_USER_EMAIL,))
     user = cur.fetchone()
-    if not user:
-        cur.close()
-        conn.close()
-        return []
-    cur.execute('SELECT word, meaning FROM words WHERE user_id = %s ORDER BY id', (user['id'],))
-    rows = cur.fetchall()
     cur.close()
     conn.close()
-    return [dict(r) for r in rows]
+    return user['id'] if user else None
+
+def get_primary_user_word_count(user_id):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT COUNT(*) FROM words WHERE user_id = %s', (user_id,))
+    count = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return count
+
+def pick_and_mark_daily_words(user_id, group_size, today):
+    # Words never shown (last_shown_date IS NULL) are treated as "oldest" and
+    # always come first, so newly added words always take priority over
+    # anything that has already been shown. Once every word has a date, this
+    # naturally rotates to the least-recently-shown ones, giving a full
+    # no-repeat cycle before anything repeats.
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('''
+        SELECT id, word, meaning FROM words
+        WHERE user_id = %s
+        ORDER BY last_shown_date ASC NULLS FIRST, id ASC
+        LIMIT %s
+    ''', (user_id, group_size))
+    picks = cur.fetchall()
+    ids = [p['id'] for p in picks]
+    if ids:
+        cur2 = conn.cursor()
+        cur2.execute('UPDATE words SET last_shown_date = %s WHERE id = ANY(%s)', (today, ids))
+        conn.commit()
+        cur2.close()
+    cur.close()
+    conn.close()
+    return [dict(p) for p in picks]
 
 def load_words_from_file():
     try:
@@ -100,16 +128,17 @@ def get_daily_words():
     # ---- Primary source: the user's own word bank ----
     # Meaning always comes from the user's own database entry (never overwritten).
     # Example sentence is looked up from the dictionary API just to fill the
-    # "used in a sentence" line — if the API has nothing, a simple placeholder
-    # sentence is used instead so the example line is never blank.
-    user_words = get_primary_user_word_bank()
-    if len(user_words) >= group_size:
-        n = len(user_words)
-        start = (day_index * group_size) % n
-        picks = [user_words[(start + i) % n] for i in range(group_size)]
+    # "used in a sentence" line — if the API has nothing, a fallback sentence
+    # built from the meaning is used instead so the example line is never blank.
+    user_id = get_primary_user_id()
+    if user_id and get_primary_user_word_count(user_id) >= group_size:
+        picks = pick_and_mark_daily_words(user_id, group_size, today)
         for p in picks:
             dict_info = fetch_word_definition(p['word'])
-            example = dict_info['example'] if dict_info and dict_info.get('example') else f'Try using "{p["word"]}" in a sentence of your own!'
+            example = dict_info['example'] if dict_info and dict_info.get('example') else None
+            if not example:
+                clean_meaning = p['meaning'].rstrip('.').lower()
+                example = f'"{p["word"].capitalize()}" means {clean_meaning}.'
             result.append({
                 'word': p['word'].capitalize(),
                 'meaning': p['meaning'],
@@ -179,6 +208,7 @@ def init_db():
             user_id INTEGER REFERENCES users(id)
         )
     ''')
+    cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS last_shown_date DATE")
     conn.commit()
     cur.close()
     conn.close()
