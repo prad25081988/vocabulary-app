@@ -57,7 +57,7 @@ def pick_and_mark_daily_words(user_id, group_size, today):
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute('''
-        SELECT id, word, meaning FROM words
+        SELECT id, word, meaning, example FROM words
         WHERE user_id = %s
         ORDER BY last_shown_date ASC NULLS FIRST, id ASC
         LIMIT %s
@@ -84,7 +84,7 @@ def load_words_from_file():
 
 def fetch_word_definition(word):
     try:
-        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=6)
+        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=4)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -116,6 +116,17 @@ def fetch_word_definition(word):
     except Exception:
         return None
 
+def save_word_example(word_id, example):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('UPDATE words SET example = %s WHERE id = %s', (example, word_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print('save_word_example error:', str(e))
+
 def get_daily_words():
     today = date.today()
     if daily_words_cache['date'] == today and daily_words_cache['words']:
@@ -127,18 +138,23 @@ def get_daily_words():
 
     # ---- Primary source: the user's own word bank ----
     # Meaning always comes from the user's own database entry (never overwritten).
-    # Example sentence is looked up from the dictionary API just to fill the
-    # "used in a sentence" line — if the API has nothing, a fallback sentence
-    # built from the meaning is used instead so the example line is never blank.
+    # Example sentence: if we've already fetched one for this word before, reuse
+    # it from the database instead of calling the dictionary API again. This is
+    # what keeps daily words fast and avoids repeated slow external calls (and
+    # the server timeouts that can come from an unreliable third-party API).
     user_id = get_primary_user_id()
     if user_id and get_primary_user_word_count(user_id) >= group_size:
         picks = pick_and_mark_daily_words(user_id, group_size, today)
         for p in picks:
-            dict_info = fetch_word_definition(p['word'])
-            example = dict_info['example'] if dict_info and dict_info.get('example') else None
-            if not example:
-                clean_meaning = p['meaning'].rstrip('.').lower()
-                example = f'"{p["word"].capitalize()}" means {clean_meaning}.'
+            if p.get('example'):
+                example = p['example']
+            else:
+                dict_info = fetch_word_definition(p['word'])
+                example = dict_info['example'] if dict_info and dict_info.get('example') else None
+                if not example:
+                    clean_meaning = p['meaning'].rstrip('.').lower()
+                    example = f'"{p["word"].capitalize()}" means {clean_meaning}.'
+                save_word_example(p['id'], example)
             result.append({
                 'word': p['word'].capitalize(),
                 'meaning': p['meaning'],
@@ -211,6 +227,7 @@ def init_db():
     ''')
     cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS last_shown_date DATE")
     cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS shown_count INTEGER DEFAULT 0")
+    cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS example TEXT")
     conn.commit()
     cur.close()
     conn.close()
@@ -470,7 +487,7 @@ def word_details():
     if not word:
         return jsonify({'error': 'Word is required'}), 400
     try:
-        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=6)
+        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=4)
         if resp.status_code != 200:
             return jsonify({'word': word.capitalize(), 'found': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
 
