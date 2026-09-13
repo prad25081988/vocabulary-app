@@ -480,6 +480,46 @@ def update_practice_size():
     conn.close()
     return jsonify({'message': 'Practice session size updated', 'session_size': size})
 
+def fetch_dictionary_json(word):
+    for t in (6, 8):
+        try:
+            resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=t)
+            if resp.status_code == 200:
+                return resp.json(), False
+            else:
+                return None, False
+        except requests.exceptions.Timeout:
+            continue
+        except Exception as e:
+            print('dictionary fetch error:', str(e))
+            return None, False
+    return None, True
+
+def guess_base_forms(word):
+    w = word.lower()
+    candidates = []
+    if w.endswith('ied'):
+        candidates.append(w[:-3] + 'y')
+    if w.endswith('ies'):
+        candidates.append(w[:-3] + 'y')
+    if w.endswith('ing'):
+        candidates.append(w[:-3])
+        candidates.append(w[:-3] + 'e')
+    if w.endswith('ed'):
+        candidates.append(w[:-1])
+        candidates.append(w[:-2])
+    if w.endswith('es'):
+        candidates.append(w[:-2])
+    if w.endswith('s') and not w.endswith('ss'):
+        candidates.append(w[:-1])
+    seen = set()
+    result = []
+    for c in candidates:
+        if c and c != w and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
 @app.route('/api/word-details', methods=['GET'])
 @authenticate
 def word_details():
@@ -487,28 +527,18 @@ def word_details():
     if not word:
         return jsonify({'error': 'Word is required'}), 400
 
-    data = None
-    timed_out = False
-    for attempt_timeout in (6, 8):
-        try:
-            resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=attempt_timeout)
-            if resp.status_code == 200:
-                data = resp.json()
-                timed_out = False
+    data, timed_out = fetch_dictionary_json(word)
+    used_word = word
+
+    if not data and not timed_out:
+        for candidate in guess_base_forms(word):
+            candidate_data, candidate_timed_out = fetch_dictionary_json(candidate)
+            if candidate_data:
+                data = candidate_data
+                used_word = candidate
                 break
-            else:
-                # A clean non-200 (e.g. 404 word not found) — no point retrying.
-                data = None
-                timed_out = False
-                break
-        except requests.exceptions.Timeout:
-            timed_out = True
-            continue
-        except Exception as e:
-            print('word-details error:', str(e))
-            data = None
-            timed_out = False
-            break
+            if candidate_timed_out:
+                timed_out = True
 
     if not data:
         return jsonify({
@@ -518,7 +548,8 @@ def word_details():
             'phonetic': None,
             'audio': None,
             'origin': None,
-            'meanings': []
+            'meanings': [],
+            'note': None
         })
 
     try:
@@ -554,6 +585,10 @@ def word_details():
                     'antonyms': m.get('antonyms', [])[:5]
                 })
 
+        note = None
+        if used_word.lower() != word.lower():
+            note = 'No exact entry for "' + word + '" \u2014 showing results for its root form, "' + used_word + '".'
+
         return jsonify({
             'word': word.capitalize(),
             'found': True,
@@ -561,11 +596,12 @@ def word_details():
             'phonetic': phonetic,
             'audio': audio,
             'origin': origin,
-            'meanings': meanings_out
+            'meanings': meanings_out,
+            'note': note
         })
     except Exception as e:
         print('word-details parse error:', str(e))
-        return jsonify({'word': word.capitalize(), 'found': False, 'timed_out': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
+        return jsonify({'word': word.capitalize(), 'found': False, 'timed_out': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': [], 'note': None})
 
 @app.route('/api/practice', methods=['GET'])
 @authenticate
