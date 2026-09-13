@@ -527,7 +527,7 @@
     function buildMeaningSentence(word, meaning) {
       const cleanMeaning = meaning.trim().replace(/\.$/, '');
       const lowerMeaning = cleanMeaning.charAt(0).toLowerCase() + cleanMeaning.slice(1);
-      return `"means ${lowerMeaning}"`;
+      return `means "${lowerMeaning}"`;
     }
 
     function renderWordDetails(data) {
