@@ -98,16 +98,17 @@ def clean_mw_markup(text):
 def extract_mw_examples(def_list):
     examples = []
     def walk(node):
-        if isinstance(node, dict):
-            if 'vis' in node and isinstance(node['vis'], list):
-                for v in node['vis']:
+        if isinstance(node, list):
+            if len(node) == 2 and node[0] == 'vis' and isinstance(node[1], list):
+                for v in node[1]:
                     if isinstance(v, dict) and v.get('t'):
                         examples.append(clean_mw_markup(v['t']))
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
+                return
             for item in node:
                 walk(item)
+        elif isinstance(node, dict):
+            for v in node.values():
+                walk(v)
     walk(def_list)
     return examples
 
@@ -123,6 +124,37 @@ def build_mw_audio_url(filename):
     else:
         subdir = filename[0]
     return f'https://media.merriam-webster.com/audio/prons/en/us/mp3/{subdir}/{filename}.mp3'
+
+def mw_phonetic_to_plain(phonetic):
+    # Best-effort conversion of Merriam-Webster's respelling notation into a
+    # plain "sounds-like" spelling with the stressed syllable in caps.
+    # This is an approximation, not a precise phonetic transcription.
+    if not phonetic:
+        return None
+
+    sound_map = [
+        ('ā', 'ay'), ('ä', 'ah'), ('a', 'a'),
+        ('ē', 'ee'), ('e', 'e'),
+        ('ī', 'eye'), ('i', 'i'),
+        ('ō', 'oh'), ('ȯ', 'aw'), ('œ', 'er'), ('o', 'o'),
+        ('ü', 'oo'), ('ú', 'oo'), ('ù', 'oo'), ('u', 'u'),
+        ('ə', 'uh'), ('ǝ', 'uh'),
+        ('ŋ', 'ng'),
+        ('th', 'th'), ('sh', 'sh'), ('zh', 'zh'), ('ch', 'ch'),
+    ]
+
+    syllables = re.split(r'[-\s]', phonetic)
+    plain_syllables = []
+    for syl in syllables:
+        stressed = 'ˈ' in syl
+        clean = syl.replace('ˈ', '').replace('ˌ', '')
+        for src, dst in sound_map:
+            clean = clean.replace(src, dst)
+        clean = clean.upper() if stressed else clean.lower()
+        if clean:
+            plain_syllables.append(clean)
+
+    return '-'.join(plain_syllables) if plain_syllables else None
 
 def fetch_mw_dict(word, dict_slug, api_key):
     if not api_key:
@@ -244,34 +276,29 @@ def fetch_word_definition(word):
 def get_cached_word_details(word_key):
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute('SELECT phonetic, audio, origin, meanings, note FROM word_details_cache WHERE word = %s', (word_key,))
+    cur.execute('SELECT meanings, note FROM word_details_cache WHERE word = %s', (word_key,))
     row = cur.fetchone()
     cur.close()
     conn.close()
-    if not row:
+    if not row or not row['meanings']:
         return None
-    return {
-        'phonetic': row['phonetic'],
-        'audio': row['audio'],
-        'origin': row['origin'],
-        'meanings': json.loads(row['meanings']) if row['meanings'] else [],
-        'note': row['note']
-    }
+    payload = json.loads(row['meanings'])
+    payload['note'] = row['note']
+    return payload
 
-def save_cached_word_details(word_key, phonetic, audio, origin, meanings, note):
+def save_cached_word_details(word_key, payload, note):
     try:
         conn = get_db()
         cur = conn.cursor()
         cur.execute('''
-            INSERT INTO word_details_cache (word, phonetic, audio, origin, meanings, note)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO word_details_cache (word, phonetic, audio, meanings, note)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (word) DO UPDATE SET
                 phonetic = EXCLUDED.phonetic,
                 audio = EXCLUDED.audio,
-                origin = EXCLUDED.origin,
                 meanings = EXCLUDED.meanings,
                 note = EXCLUDED.note
-        ''', (word_key, phonetic, audio, origin, json.dumps(meanings), note))
+        ''', (word_key, payload.get('phonetic'), payload.get('audio'), json.dumps(payload), note))
         conn.commit()
         cur.close()
         conn.close()
@@ -677,7 +704,7 @@ def merge_mw_meanings(word):
 
     phonetic = None
     audio = None
-    meanings_by_pos = {}
+    flat_defs = []
     seen_defs = set()
 
     for data in sources:
@@ -692,40 +719,39 @@ def merge_mw_meanings(word):
                 if not audio and prs[0].get('sound', {}).get('audio'):
                     audio = build_mw_audio_url(prs[0]['sound']['audio'])
 
-            pos = entry.get('fl', '') or 'other'
             shortdefs = [clean_mw_markup(sd) for sd in entry.get('shortdef', [])]
             examples_all = extract_mw_examples(entry.get('def', []))
 
-            if pos not in meanings_by_pos:
-                meanings_by_pos[pos] = {'partOfSpeech': pos, 'definitions': [], 'synonyms': [], 'antonyms': []}
-
             for i, sd in enumerate(shortdefs):
-                if len(meanings_by_pos[pos]['definitions']) >= 6:
-                    break
-                dedup_key = (pos, sd.lower().strip())
+                dedup_key = sd.lower().strip()
                 if dedup_key in seen_defs:
                     continue
                 seen_defs.add(dedup_key)
-                meanings_by_pos[pos]['definitions'].append({
+                flat_defs.append({
                     'definition': sd,
-                    'example': examples_all[i] if i < len(examples_all) else '',
-                    'synonyms': [],
-                    'antonyms': []
+                    'example': examples_all[i] if i < len(examples_all) else ''
                 })
 
-    meanings_out = [m for m in meanings_by_pos.values() if m['definitions']]
+    # Keep exactly the 3 clearest, most distinct meanings.
+    top_defs = flat_defs[:3]
 
-    # Every definition gets its own example. Real dictionary examples are used
-    # first; when the dictionaries themselves didn't supply one for a
-    # particular sense, a simple sentence built from that definition fills the
-    # gap so nothing in the popup is left blank.
-    for m in meanings_out:
-        for d in m['definitions']:
-            if not d['example']:
-                clean_def = d['definition'].rstrip('.').lower()
-                d['example'] = f'"{word.capitalize()}" means {clean_def}.'
+    # Every meaning gets its own example. Real dictionary examples are used
+    # first; if one is missing, a simple sentence built from the definition
+    # fills the gap so nothing in the popup is left blank.
+    for d in top_defs:
+        if not d['example']:
+            clean_def = d['definition'].rstrip('.').lower()
+            d['example'] = f'"{word.capitalize()}" means {clean_def}.'
 
-    return {'phonetic': phonetic, 'audio': audio, 'meanings': meanings_out}, timed_out, None
+    sounds_like = mw_phonetic_to_plain(phonetic)
+
+    return {
+        'phonetic': phonetic,
+        'sounds_like': sounds_like,
+        'audio': audio,
+        'meanings': [d['definition'] for d in top_defs],
+        'examples': [d['example'] for d in top_defs]
+    }, timed_out, None
 
 @app.route('/api/word-details', methods=['GET'])
 @authenticate
@@ -742,11 +768,13 @@ def word_details():
             'word': word.capitalize(),
             'found': True,
             'timed_out': False,
-            'phonetic': cached['phonetic'],
-            'audio': cached['audio'],
-            'origin': cached['origin'],
-            'meanings': cached['meanings'],
-            'note': cached['note']
+            'spelling_status': 'corrected' if cached.get('note') else 'correct',
+            'phonetic': cached.get('phonetic'),
+            'sounds_like': cached.get('sounds_like'),
+            'audio': cached.get('audio'),
+            'meanings': cached.get('meanings', []),
+            'examples': cached.get('examples', []),
+            'note': cached.get('note')
         })
 
     if not os.environ.get('MERRIAM_WEBSTER_API_KEY') and not os.environ.get('MERRIAM_WEBSTER_INTERMEDIATE_KEY'):
@@ -754,10 +782,12 @@ def word_details():
             'word': word.capitalize(),
             'found': False,
             'timed_out': False,
+            'spelling_status': 'not_found',
             'phonetic': None,
+            'sounds_like': None,
             'audio': None,
-            'origin': None,
             'meanings': [],
+            'examples': [],
             'note': 'Dictionary lookup is not configured yet (missing API key).'
         })
 
@@ -775,10 +805,12 @@ def word_details():
                     'word': word.capitalize(),
                     'found': False,
                     'timed_out': timed_out2,
+                    'spelling_status': 'not_found',
                     'phonetic': None,
+                    'sounds_like': None,
                     'audio': None,
-                    'origin': None,
                     'meanings': [],
+                    'examples': [],
                     'note': f'No exact entry for "{word}". Did you mean: {", ".join(suggestions[:5])}?'
                 })
         else:
@@ -786,10 +818,12 @@ def word_details():
                 'word': word.capitalize(),
                 'found': False,
                 'timed_out': timed_out,
+                'spelling_status': 'not_found',
                 'phonetic': None,
+                'sounds_like': None,
                 'audio': None,
-                'origin': None,
                 'meanings': [],
+                'examples': [],
                 'note': None
             })
 
@@ -797,15 +831,23 @@ def word_details():
         'word': word.capitalize(),
         'found': bool(merged['meanings']),
         'timed_out': False,
+        'spelling_status': 'corrected' if merged.get('note') else 'correct',
         'phonetic': merged['phonetic'],
+        'sounds_like': merged['sounds_like'],
         'audio': merged['audio'],
-        'origin': None,
         'meanings': merged['meanings'],
+        'examples': merged['examples'],
         'note': merged.get('note')
     }
 
     if result['found']:
-        save_cached_word_details(word_key, result['phonetic'], result['audio'], result['origin'], result['meanings'], result['note'])
+        save_cached_word_details(word_key, {
+            'phonetic': result['phonetic'],
+            'sounds_like': result['sounds_like'],
+            'audio': result['audio'],
+            'meanings': result['meanings'],
+            'examples': result['examples']
+        }, result['note'])
 
     return jsonify(result)
 
