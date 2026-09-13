@@ -403,6 +403,7 @@ def init_db():
     # Safe upgrades for a table that already existed before Google login was added
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT UNIQUE")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS practice_session_size INTEGER DEFAULT 20")
     cur.execute("ALTER TABLE users ALTER COLUMN password DROP NOT NULL")
     cur.execute("ALTER TABLE users ALTER COLUMN phone DROP NOT NULL")
@@ -479,6 +480,7 @@ def google_callback():
         return redirect('/?error=google_login_failed')
 
     email = user_info['email']
+    google_name = user_info.get('name', '')
 
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -486,8 +488,8 @@ def google_callback():
     user = cur.fetchone()
     if not user:
         cur.execute(
-            'INSERT INTO users (email, auth_provider) VALUES (%s, %s) RETURNING *',
-            (email, 'google')
+            'INSERT INTO users (email, auth_provider, name) VALUES (%s, %s, %s) RETURNING *',
+            (email, 'google', google_name)
         )
         user = cur.fetchone()
         conn.commit()
@@ -495,7 +497,8 @@ def google_callback():
     conn.close()
 
     jwt_token = jwt.encode({'id': user['id'], 'identifier': email}, SECRET, algorithm='HS256')
-    return redirect(f'/?token={jwt_token}&identifier={email}')
+    display_name = user.get('name') or email
+    return redirect(f'/?token={jwt_token}&identifier={email}&name={display_name}')
 
 # ---------- EXISTING PHONE/PASSWORD LOGIN (unchanged, still works) ----------
 
@@ -523,6 +526,7 @@ def verify_register():
     phone = data['phone']
     otp = data['otp']
     password = data['password']
+    name = data.get('name', '').strip()
     if phone not in otp_store or otp_store[phone] != otp:
         return jsonify({'error': 'Invalid or expired OTP'}), 400
     del otp_store[phone]
@@ -531,8 +535,8 @@ def verify_register():
         conn = get_db()
         cur = conn.cursor()
         cur.execute(
-            'INSERT INTO users (phone, password, auth_provider) VALUES (%s, %s, %s)',
-            (phone, hashed.decode('utf-8'), 'local')
+            'INSERT INTO users (phone, password, auth_provider, name) VALUES (%s, %s, %s, %s)',
+            (phone, hashed.decode('utf-8'), 'local', name)
         )
         conn.commit()
         cur.close()
@@ -558,7 +562,7 @@ def login():
     if not bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
         return jsonify({'error': 'Invalid password'}), 400
     token = jwt.encode({'id': user['id'], 'identifier': phone}, SECRET, algorithm='HS256')
-    return jsonify({'token': token, 'identifier': phone})
+    return jsonify({'token': token, 'identifier': phone, 'name': user.get('name') or phone})
 
 @app.route('/api/forgot-password', methods=['POST'])
 def forgot_password():

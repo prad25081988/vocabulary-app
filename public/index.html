@@ -78,6 +78,7 @@
     <div class="auth-box">
       <h2>Register</h2>
       <div id="regStep1">
+        <input id="regName" placeholder="Enter your name" type="text" />
         <input id="regPhone" placeholder="Enter 10 digit phone number" maxlength="10" type="tel" />
         <button onclick="sendRegOTP()">Send OTP</button>
         <br/><br/>
@@ -226,9 +227,11 @@
   <script>
     let token = localStorage.getItem('vocab_token');
     let identifier = localStorage.getItem('vocab_identifier');
+    let userName = localStorage.getItem('vocab_name');
     let practiceWords = [];
     let currentIndex = 0;
     let regPhoneNum = '';
+    let regNameVal = '';
     let forgotPhoneNum = '';
     let editingContext = null; // 'list' or 'practice'
     let editingId = null;
@@ -239,8 +242,10 @@
     if (urlParams.get('token')) {
       token = urlParams.get('token');
       identifier = urlParams.get('identifier');
+      userName = urlParams.get('name') || identifier;
       localStorage.setItem('vocab_token', token);
       localStorage.setItem('vocab_identifier', identifier);
+      localStorage.setItem('vocab_name', userName);
       window.history.replaceState({}, document.title, '/');
       showApp();
     }
@@ -264,15 +269,18 @@
       const data = await res.json();
       if (data.error) { showMsg('loginMsg', data.error, 'red'); }
       else {
-        token = data.token; identifier = data.identifier;
+        token = data.token; identifier = data.identifier; userName = data.name || data.identifier;
         localStorage.setItem('vocab_token', token);
         localStorage.setItem('vocab_identifier', identifier);
+        localStorage.setItem('vocab_name', userName);
         showApp();
       }
     }
 
     async function sendRegOTP() {
+      const name = document.getElementById('regName').value.trim();
       const p = document.getElementById('regPhone').value.trim();
+      if (!name) { showMsg('regMsg1','Please enter your name','red'); return; }
       if (!p || p.length !== 10) { showMsg('regMsg1','Enter valid 10 digit phone number','red'); return; }
       showMsg('regMsg1','Sending OTP...','blue');
       const res = await fetch('/api/send-otp', {
@@ -283,6 +291,7 @@
       const data = await res.json();
       if (data.error) { showMsg('regMsg1', data.error, 'red'); }
       else {
+        regNameVal = name;
         regPhoneNum = p;
         document.getElementById('regStep1').classList.add('hidden');
         document.getElementById('regStep2').classList.remove('hidden');
@@ -299,7 +308,7 @@
       const res = await fetch('/api/verify-register', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({phone: regPhoneNum, otp, password: pwd})
+        body: JSON.stringify({phone: regPhoneNum, otp, password: pwd, name: regNameVal})
       });
       const data = await res.json();
       if (data.error) { showMsg('regMsg2', data.error, 'red'); }
@@ -358,6 +367,7 @@
     function logout() {
       localStorage.removeItem('vocab_token');
       localStorage.removeItem('vocab_identifier');
+      localStorage.removeItem('vocab_name');
       token = null; practiceWords = []; currentIndex = 0;
       document.getElementById('practiceStart').classList.remove('hidden');
       document.getElementById('practiceArea').classList.add('hidden');
@@ -367,7 +377,7 @@
 
     function showApp() {
       showSection('appSection');
-      document.getElementById('welcomeUser').textContent = identifier;
+      document.getElementById('welcomeUser').textContent = userName || identifier;
       ['addTab','listTab','practiceTab'].forEach(id => document.getElementById(id).classList.add('hidden'));
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.getElementById('addTab').classList.remove('hidden');
