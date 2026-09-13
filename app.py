@@ -5,6 +5,8 @@ import bcrypt
 import jwt
 import os
 import requests
+import json
+import re
 import psycopg2
 import psycopg2.extras
 from functools import wraps
@@ -82,39 +84,199 @@ def load_words_from_file():
         print('words_list.txt read error:', str(e))
         return []
 
-def fetch_word_definition(word):
-    try:
-        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=4)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        if not data:
-            return None
+def clean_mw_markup(text):
+    if not text:
+        return text
+    text = re.sub(r'\{it\}|\{/it\}|\{b\}|\{/b\}|\{inf\}|\{/inf\}|\{sup\}|\{/sup\}|\{phrase\}|\{/phrase\}|\{wi\}|\{/wi\}', '', text)
+    text = re.sub(r'\{sx\|([^|}]+)\|[^}]*\}', r'\1', text)
+    text = re.sub(r'\{a_link\|([^}]+)\}', r'\1', text)
+    text = re.sub(r'\{d_link\|([^|}]+)\|[^}]*\}', r'\1', text)
+    text = re.sub(r'\{dx[^}]*\}.*?\{/dx\}', '', text)
+    text = re.sub(r'\{[^}]*\}', '', text)
+    return text.strip()
 
-        meaning = None
-        example = None
-        for entry in data:
-            for m in entry.get('meanings', []):
-                for d in m.get('definitions', []):
-                    if meaning is None and d.get('definition'):
-                        meaning = d.get('definition')
-                    if not example and d.get('example'):
-                        example = d.get('example')
-                    if meaning and example:
-                        break
-                if meaning and example:
-                    break
-            if meaning and example:
-                break
+def extract_mw_examples(def_list):
+    examples = []
+    def walk(node):
+        if isinstance(node, dict):
+            if 'vis' in node and isinstance(node['vis'], list):
+                for v in node['vis']:
+                    if isinstance(v, dict) and v.get('t'):
+                        examples.append(clean_mw_markup(v['t']))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+    walk(def_list)
+    return examples
 
-        if not meaning:
-            return None
-        if not example:
-            clean_meaning = meaning.rstrip('.').lower()
-            example = f'"{word.capitalize()}" means {clean_meaning}.'
-        return {'word': word.capitalize(), 'meaning': meaning, 'example': example}
-    except Exception:
+def build_mw_audio_url(filename):
+    if not filename:
         return None
+    if filename.startswith('bix'):
+        subdir = 'bix'
+    elif filename.startswith('gg'):
+        subdir = 'gg'
+    elif not filename[0].isalpha():
+        subdir = 'number'
+    else:
+        subdir = filename[0]
+    return f'https://media.merriam-webster.com/audio/prons/en/us/mp3/{subdir}/{filename}.mp3'
+
+def fetch_mw_dict(word, dict_slug, api_key):
+    if not api_key:
+        return None, False
+    for t in (6, 8):
+        try:
+            resp = requests.get(
+                f'https://www.dictionaryapi.com/api/v3/references/{dict_slug}/json/{word}',
+                params={'key': api_key}, timeout=t
+            )
+            if resp.status_code == 200:
+                return resp.json(), False
+            return None, False
+        except requests.exceptions.Timeout:
+            continue
+        except Exception as e:
+            print(f'Merriam-Webster ({dict_slug}) fetch error:', str(e))
+            return None, False
+    return None, True
+
+def fetch_mw_raw(word):
+    collegiate_key = os.environ.get('MERRIAM_WEBSTER_API_KEY')
+    intermediate_key = os.environ.get('MERRIAM_WEBSTER_INTERMEDIATE_KEY')
+
+    data, timed_out = fetch_mw_dict(word, 'collegiate', collegiate_key)
+    if data and isinstance(data[0], dict):
+        return data, False
+
+    data2, timed_out2 = fetch_mw_dict(word, 'sd3', intermediate_key)
+    if data2 and isinstance(data2[0], dict):
+        return data2, False
+
+    if timed_out or timed_out2:
+        return None, True
+
+    # Neither dictionary had a direct entry - prefer whichever gave spelling
+    # suggestions (a list of strings) so the caller can still offer them.
+    if data:
+        return data, False
+    if data2:
+        return data2, False
+    return None, False
+
+def parse_mw_entries(data, used_word, original_word):
+    phonetic = None
+    audio = None
+    meanings_out = []
+
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        hwi = entry.get('hwi', {})
+        prs = hwi.get('prs', [])
+        if prs:
+            if not phonetic and prs[0].get('mw'):
+                phonetic = prs[0].get('mw')
+            if not audio and prs[0].get('sound', {}).get('audio'):
+                audio = build_mw_audio_url(prs[0]['sound']['audio'])
+
+        pos = entry.get('fl', '')
+        shortdefs = [clean_mw_markup(sd) for sd in entry.get('shortdef', [])]
+        examples_all = extract_mw_examples(entry.get('def', []))
+
+        defs_out = []
+        for i, sd in enumerate(shortdefs[:5]):
+            defs_out.append({
+                'definition': sd,
+                'example': examples_all[i] if i < len(examples_all) else '',
+                'synonyms': [],
+                'antonyms': []
+            })
+        if defs_out:
+            meanings_out.append({'partOfSpeech': pos, 'definitions': defs_out, 'synonyms': [], 'antonyms': []})
+
+    note = None
+    if used_word.lower() != original_word.lower():
+        note = f'No exact entry for "{original_word}" — showing results for "{used_word}".'
+
+    return {
+        'word': original_word.capitalize(),
+        'found': bool(meanings_out),
+        'timed_out': False,
+        'phonetic': phonetic,
+        'audio': audio,
+        'origin': None,
+        'meanings': meanings_out,
+        'note': note
+    }
+
+def fetch_word_definition(word):
+    data, timed_out = fetch_mw_raw(word)
+    if timed_out or not data:
+        return None
+
+    if isinstance(data[0], str):
+        suggestion = data[0]
+        data2, _ = fetch_mw_raw(suggestion)
+        if data2 and isinstance(data2[0], dict):
+            data = data2
+        else:
+            return None
+
+    entry = data[0]
+    if not isinstance(entry, dict):
+        return None
+
+    shortdefs = entry.get('shortdef', [])
+    if not shortdefs:
+        return None
+
+    meaning = clean_mw_markup(shortdefs[0])
+    examples = extract_mw_examples(entry.get('def', []))
+    example = clean_mw_markup(examples[0]) if examples else None
+    if not example:
+        clean_meaning = meaning.rstrip('.').lower()
+        example = f'"{word.capitalize()}" means {clean_meaning}.'
+    return {'word': word.capitalize(), 'meaning': meaning, 'example': example}
+
+def get_cached_word_details(word_key):
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute('SELECT phonetic, audio, origin, meanings, note FROM word_details_cache WHERE word = %s', (word_key,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return None
+    return {
+        'phonetic': row['phonetic'],
+        'audio': row['audio'],
+        'origin': row['origin'],
+        'meanings': json.loads(row['meanings']) if row['meanings'] else [],
+        'note': row['note']
+    }
+
+def save_cached_word_details(word_key, phonetic, audio, origin, meanings, note):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute('''
+            INSERT INTO word_details_cache (word, phonetic, audio, origin, meanings, note)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (word) DO UPDATE SET
+                phonetic = EXCLUDED.phonetic,
+                audio = EXCLUDED.audio,
+                origin = EXCLUDED.origin,
+                meanings = EXCLUDED.meanings,
+                note = EXCLUDED.note
+        ''', (word_key, phonetic, audio, origin, json.dumps(meanings), note))
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print('save_cached_word_details error:', str(e))
 
 def save_word_example(word_id, example):
     try:
@@ -228,6 +390,17 @@ def init_db():
     cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS last_shown_date DATE")
     cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS shown_count INTEGER DEFAULT 0")
     cur.execute("ALTER TABLE words ADD COLUMN IF NOT EXISTS example TEXT")
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS word_details_cache (
+            word TEXT PRIMARY KEY,
+            phonetic TEXT,
+            audio TEXT,
+            origin TEXT,
+            meanings TEXT,
+            note TEXT,
+            cached_at TIMESTAMP DEFAULT NOW()
+        )
+    ''')
     conn.commit()
     cur.close()
     conn.close()
@@ -480,46 +653,6 @@ def update_practice_size():
     conn.close()
     return jsonify({'message': 'Practice session size updated', 'session_size': size})
 
-def fetch_dictionary_json(word):
-    for t in (6, 8):
-        try:
-            resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=t)
-            if resp.status_code == 200:
-                return resp.json(), False
-            else:
-                return None, False
-        except requests.exceptions.Timeout:
-            continue
-        except Exception as e:
-            print('dictionary fetch error:', str(e))
-            return None, False
-    return None, True
-
-def guess_base_forms(word):
-    w = word.lower()
-    candidates = []
-    if w.endswith('ied'):
-        candidates.append(w[:-3] + 'y')
-    if w.endswith('ies'):
-        candidates.append(w[:-3] + 'y')
-    if w.endswith('ing'):
-        candidates.append(w[:-3])
-        candidates.append(w[:-3] + 'e')
-    if w.endswith('ed'):
-        candidates.append(w[:-1])
-        candidates.append(w[:-2])
-    if w.endswith('es'):
-        candidates.append(w[:-2])
-    if w.endswith('s') and not w.endswith('ss'):
-        candidates.append(w[:-1])
-    seen = set()
-    result = []
-    for c in candidates:
-        if c and c != w and c not in seen:
-            seen.add(c)
-            result.append(c)
-    return result
-
 @app.route('/api/word-details', methods=['GET'])
 @authenticate
 def word_details():
@@ -527,18 +660,54 @@ def word_details():
     if not word:
         return jsonify({'error': 'Word is required'}), 400
 
-    data, timed_out = fetch_dictionary_json(word)
+    word_key = word.lower()
+
+    cached = get_cached_word_details(word_key)
+    if cached:
+        return jsonify({
+            'word': word.capitalize(),
+            'found': True,
+            'timed_out': False,
+            'phonetic': cached['phonetic'],
+            'audio': cached['audio'],
+            'origin': cached['origin'],
+            'meanings': cached['meanings'],
+            'note': cached['note']
+        })
+
+    if not os.environ.get('MERRIAM_WEBSTER_API_KEY') and not os.environ.get('MERRIAM_WEBSTER_INTERMEDIATE_KEY'):
+        return jsonify({
+            'word': word.capitalize(),
+            'found': False,
+            'timed_out': False,
+            'phonetic': None,
+            'audio': None,
+            'origin': None,
+            'meanings': [],
+            'note': 'Dictionary lookup is not configured yet (missing API key).'
+        })
+
+    data, timed_out = fetch_mw_raw(word)
     used_word = word
 
-    if not data and not timed_out:
-        for candidate in guess_base_forms(word):
-            candidate_data, candidate_timed_out = fetch_dictionary_json(candidate)
-            if candidate_data:
-                data = candidate_data
-                used_word = candidate
-                break
-            if candidate_timed_out:
-                timed_out = True
+    if data and isinstance(data[0], str):
+        suggestions = data[:5]
+        if suggestions:
+            data2, timed_out2 = fetch_mw_raw(suggestions[0])
+            if data2 and isinstance(data2[0], dict):
+                data = data2
+                used_word = suggestions[0]
+            else:
+                return jsonify({
+                    'word': word.capitalize(),
+                    'found': False,
+                    'timed_out': timed_out2,
+                    'phonetic': None,
+                    'audio': None,
+                    'origin': None,
+                    'meanings': [],
+                    'note': f'No exact entry for "{word}". Did you mean: {", ".join(suggestions)}?'
+                })
 
     if not data:
         return jsonify({
@@ -552,58 +721,13 @@ def word_details():
             'note': None
         })
 
-    try:
-        phonetic = None
-        audio = None
-        origin = None
-        meanings_out = []
+    result = parse_mw_entries(data, used_word, word)
 
-        for entry in data:
-            if not phonetic and entry.get('phonetic'):
-                phonetic = entry.get('phonetic')
-            if not origin and entry.get('origin'):
-                origin = entry.get('origin')
-            for ph in entry.get('phonetics', []):
-                if not phonetic and ph.get('text'):
-                    phonetic = ph.get('text')
-                if not audio and ph.get('audio'):
-                    audio = ph.get('audio')
+    if result['found']:
+        save_cached_word_details(word_key, result['phonetic'], result['audio'], result['origin'], result['meanings'], result['note'])
 
-            for m in entry.get('meanings', []):
-                defs_out = []
-                for d in m.get('definitions', [])[:5]:
-                    defs_out.append({
-                        'definition': d.get('definition', ''),
-                        'example': d.get('example', ''),
-                        'synonyms': d.get('synonyms', [])[:5],
-                        'antonyms': d.get('antonyms', [])[:5]
-                    })
-                meanings_out.append({
-                    'partOfSpeech': m.get('partOfSpeech', ''),
-                    'definitions': defs_out,
-                    'synonyms': m.get('synonyms', [])[:5],
-                    'antonyms': m.get('antonyms', [])[:5]
-                })
+    return jsonify(result)
 
-        note = None
-        if used_word.lower() != word.lower():
-            note = 'No exact entry for "' + word + '" \u2014 showing results for its root form, "' + used_word + '".'
-
-        return jsonify({
-            'word': word.capitalize(),
-            'found': True,
-            'timed_out': False,
-            'phonetic': phonetic,
-            'audio': audio,
-            'origin': origin,
-            'meanings': meanings_out,
-            'note': note
-        })
-    except Exception as e:
-        print('word-details parse error:', str(e))
-        return jsonify({'word': word.capitalize(), 'found': False, 'timed_out': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': [], 'note': None})
-
-@app.route('/api/practice', methods=['GET'])
 @authenticate
 def practice():
     conn = get_db()
