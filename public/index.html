@@ -533,10 +533,6 @@
         const posDiv = document.createElement('div');
         posDiv.style.marginBottom = '14px';
 
-        const posTitle = document.createElement('p');
-        posTitle.innerHTML = `<strong style="color:#1976D2;">${m.partOfSpeech || 'General'}</strong>`;
-        posDiv.appendChild(posTitle);
-
         const ol = document.createElement('ol');
         ol.style.paddingLeft = '20px';
         m.definitions.forEach(d => {
@@ -550,6 +546,11 @@
           ol.appendChild(li);
         });
         posDiv.appendChild(ol);
+
+        const posTag = document.createElement('p');
+        posTag.style.marginTop = '-4px';
+        posTag.innerHTML = `<span style="color:#1976D2; font-style:italic;">— ${m.partOfSpeech || 'general'}</span>`;
+        posDiv.appendChild(posTag);
 
         if (m.synonyms && m.synonyms.length > 0) {
           const syn = document.createElement('p');

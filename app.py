@@ -677,7 +677,7 @@ def merge_mw_meanings(word):
 
     phonetic = None
     audio = None
-    meanings_out = []
+    meanings_by_pos = {}
     seen_defs = set()
 
     for data in sources:
@@ -692,41 +692,38 @@ def merge_mw_meanings(word):
                 if not audio and prs[0].get('sound', {}).get('audio'):
                     audio = build_mw_audio_url(prs[0]['sound']['audio'])
 
-            pos = entry.get('fl', '')
+            pos = entry.get('fl', '') or 'other'
             shortdefs = [clean_mw_markup(sd) for sd in entry.get('shortdef', [])]
             examples_all = extract_mw_examples(entry.get('def', []))
 
-            defs_out = []
-            for i, sd in enumerate(shortdefs[:5]):
+            if pos not in meanings_by_pos:
+                meanings_by_pos[pos] = {'partOfSpeech': pos, 'definitions': [], 'synonyms': [], 'antonyms': []}
+
+            for i, sd in enumerate(shortdefs):
+                if len(meanings_by_pos[pos]['definitions']) >= 6:
+                    break
                 dedup_key = (pos, sd.lower().strip())
                 if dedup_key in seen_defs:
                     continue
                 seen_defs.add(dedup_key)
-                defs_out.append({
+                meanings_by_pos[pos]['definitions'].append({
                     'definition': sd,
                     'example': examples_all[i] if i < len(examples_all) else '',
                     'synonyms': [],
                     'antonyms': []
                 })
-            if defs_out:
-                meanings_out.append({'partOfSpeech': pos, 'definitions': defs_out, 'synonyms': [], 'antonyms': []})
 
-    # Guarantee at least 3 example sentences across all definitions combined.
-    # Real dictionary examples are used first; if there still aren't enough,
-    # fill the remaining gap with a simple sentence built from the definition
-    # itself so the popup never looks sparse.
-    total_examples = sum(1 for m in meanings_out for d in m['definitions'] if d['example'])
-    if total_examples < 3:
-        for m in meanings_out:
-            for d in m['definitions']:
-                if total_examples >= 3:
-                    break
-                if not d['example']:
-                    clean_def = d['definition'].rstrip('.').lower()
-                    d['example'] = f'"{word.capitalize()}" means {clean_def}.'
-                    total_examples += 1
-            if total_examples >= 3:
-                break
+    meanings_out = [m for m in meanings_by_pos.values() if m['definitions']]
+
+    # Every definition gets its own example. Real dictionary examples are used
+    # first; when the dictionaries themselves didn't supply one for a
+    # particular sense, a simple sentence built from that definition fills the
+    # gap so nothing in the popup is left blank.
+    for m in meanings_out:
+        for d in m['definitions']:
+            if not d['example']:
+                clean_def = d['definition'].rstrip('.').lower()
+                d['example'] = f'"{word.capitalize()}" means {clean_def}.'
 
     return {'phonetic': phonetic, 'audio': audio, 'meanings': meanings_out}, timed_out, None
 
