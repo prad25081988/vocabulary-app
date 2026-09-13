@@ -767,6 +767,7 @@ def merge_mw_meanings(word):
                 if not audio and prs[0].get('sound', {}).get('audio'):
                     audio = build_mw_audio_url(prs[0]['sound']['audio'])
 
+            pos = entry.get('fl', '')
             shortdefs = [clean_mw_markup(sd) for sd in entry.get('shortdef', [])]
             examples_all = extract_mw_examples(entry.get('def', []))
 
@@ -777,7 +778,8 @@ def merge_mw_meanings(word):
                 seen_defs.add(dedup_key)
                 flat_defs.append({
                     'definition': sd,
-                    'example': examples_all[i] if i < len(examples_all) else ''
+                    'example': examples_all[i] if i < len(examples_all) else '',
+                    'pos': pos
                 })
 
     # Keep exactly the 3 clearest, most distinct meanings.
@@ -803,7 +805,8 @@ def merge_mw_meanings(word):
         'sounds_like': sounds_like,
         'audio': audio,
         'meanings': [d['definition'] for d in top_defs],
-        'examples': [d['example'] for d in top_defs]
+        'examples': [d['example'] for d in top_defs],
+        'parts_of_speech': [d['pos'] for d in top_defs]
     }, timed_out, None
 
 @app.route('/api/word-details', methods=['GET'])
@@ -827,6 +830,7 @@ def word_details():
             'audio': cached.get('audio'),
             'meanings': cached.get('meanings', []),
             'examples': cached.get('examples', []),
+            'parts_of_speech': cached.get('parts_of_speech', []),
             'note': cached.get('note')
         })
 
@@ -841,6 +845,7 @@ def word_details():
             'audio': None,
             'meanings': [],
             'examples': [],
+            'parts_of_speech': [],
             'note': 'Dictionary lookup is not configured yet (missing API key).'
         })
 
@@ -864,6 +869,7 @@ def word_details():
                     'audio': None,
                     'meanings': [],
                     'examples': [],
+                    'parts_of_speech': [],
                     'note': f'No exact entry for "{word}". Did you mean: {", ".join(suggestions[:5])}?'
                 })
         else:
@@ -877,6 +883,7 @@ def word_details():
                 'audio': None,
                 'meanings': [],
                 'examples': [],
+                'parts_of_speech': [],
                 'note': None
             })
 
@@ -890,6 +897,7 @@ def word_details():
         'audio': merged['audio'],
         'meanings': merged['meanings'],
         'examples': merged['examples'],
+        'parts_of_speech': merged.get('parts_of_speech', []),
         'note': merged.get('note')
     }
 
@@ -899,7 +907,8 @@ def word_details():
             'sounds_like': result['sounds_like'],
             'audio': result['audio'],
             'meanings': result['meanings'],
-            'examples': result['examples']
+            'examples': result['examples'],
+            'parts_of_speech': result['parts_of_speech']
         }, result['note'])
 
     return jsonify(result)

@@ -552,10 +552,19 @@
         return;
       }
 
-      data.meanings.forEach(meaning => {
+      data.meanings.forEach((meaning, i) => {
         const li = document.createElement('li');
         li.style.marginBottom = '6px';
+        const pos = data.parts_of_speech && data.parts_of_speech[i];
         li.textContent = meaning;
+        if (pos) {
+          const posTag = document.createElement('span');
+          posTag.style.color = '#1976D2';
+          posTag.style.fontStyle = 'italic';
+          posTag.style.marginLeft = '6px';
+          posTag.textContent = `(${pos})`;
+          li.appendChild(posTag);
+        }
         meaningsList.appendChild(li);
       });
 
