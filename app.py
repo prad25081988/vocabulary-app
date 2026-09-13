@@ -684,7 +684,7 @@ def update_practice_size():
     conn.close()
     return jsonify({'message': 'Practice session size updated', 'session_size': size})
 
-def generate_ai_example(word, definition):
+def generate_ai_example(word, definition, avoid=None):
     # Only called when Merriam-Webster itself has no example sentence for this
     # specific meaning. Uses Claude Haiku (cheapest model) since this is a
     # simple, well-defined task. If no key is set, or the call fails for any
@@ -695,6 +695,10 @@ def generate_ai_example(word, definition):
     if not api_key:
         return None
     try:
+        avoid_clause = ''
+        if avoid:
+            avoid_list = '; '.join(f'"{a}"' for a in avoid)
+            avoid_clause = f' Write a DIFFERENT sentence than these already used: {avoid_list}.'
         resp = requests.post(
             'https://api.anthropic.com/v1/messages',
             headers={
@@ -709,7 +713,7 @@ def generate_ai_example(word, definition):
                     'role': 'user',
                     'content': (
                         f'Write ONE natural, clear example sentence (10-20 words) using the '
-                        f'word "{word}" with this specific meaning: "{definition}". '
+                        f'word "{word}" with this specific meaning: "{definition}".{avoid_clause} '
                         f'Reply with ONLY the sentence itself - no quotes, no preamble, no explanation.'
                     )
                 }]
@@ -754,6 +758,7 @@ def merge_mw_meanings(word):
     audio = None
     flat_defs = []
     seen_defs = set()
+    all_examples_pool = []
 
     for data in sources:
         for entry in data:
@@ -770,6 +775,7 @@ def merge_mw_meanings(word):
             pos = entry.get('fl', '')
             shortdefs = [clean_mw_markup(sd) for sd in entry.get('shortdef', [])]
             examples_all = extract_mw_examples(entry.get('def', []))
+            all_examples_pool.extend(examples_all)
 
             for i, sd in enumerate(shortdefs):
                 dedup_key = sd.lower().strip()
@@ -785,18 +791,58 @@ def merge_mw_meanings(word):
     # Keep exactly the 3 clearest, most distinct meanings.
     top_defs = flat_defs[:3]
 
-    # Every meaning gets its own example. Real dictionary examples are used
-    # first. If one is missing, an AI-generated sentence fills the gap; if
-    # that call isn't available or fails for any reason, a simple sentence
-    # built from the definition is used instead so nothing is ever left blank.
-    for d in top_defs:
-        if not d['example']:
-            ai_example = generate_ai_example(word, d['definition'])
-            if ai_example:
-                d['example'] = ai_example
-            else:
+    if len(top_defs) >= 2:
+        # Multiple distinct meanings: strict 1:1 pairing. Each meaning uses
+        # only its own aligned real example; if missing, an AI-generated
+        # sentence is written specifically for that meaning (never borrowed
+        # from another sense) so "Sentence N" always matches "Meaning N".
+        for d in top_defs:
+            if not d['example']:
+                ai_example = generate_ai_example(word, d['definition'])
+                if ai_example:
+                    d['example'] = ai_example
+                else:
+                    clean_def = d['definition'].rstrip('.').lower()
+                    d['example'] = f'{word.capitalize()} means {clean_def}.'
+        final_meanings = [d['definition'] for d in top_defs]
+        final_examples = [d['example'] for d in top_defs]
+        final_pos = [d['pos'] for d in top_defs]
+
+    elif len(top_defs) == 1:
+        # Only one distinct meaning: instead of showing just one sentence,
+        # fill up to 3 total so there's enough material to actually learn
+        # from. Real dictionary sentences (from anywhere in the word's data)
+        # are used first since there's only one sense to worry about mixing
+        # up; AI only fills in whatever real sentences can't cover.
+        d = top_defs[0]
+        sentences = []
+        if d['example']:
+            sentences.append(d['example'])
+        for e in all_examples_pool:
+            if len(sentences) >= 3:
+                break
+            if e and e not in sentences:
+                sentences.append(e)
+        attempts = 0
+        while len(sentences) < 3 and attempts < 3:
+            attempts += 1
+            ai_example = generate_ai_example(word, d['definition'], avoid=sentences)
+            if ai_example and ai_example not in sentences:
+                sentences.append(ai_example)
+            elif not ai_example:
                 clean_def = d['definition'].rstrip('.').lower()
-                d['example'] = f'{word.capitalize()} means {clean_def}.'
+                fallback = f'{word.capitalize()} means {clean_def}.'
+                if fallback not in sentences:
+                    sentences.append(fallback)
+                break
+        final_meanings = [d['definition']]
+        final_examples = sentences
+        final_pos = [d['pos']]
+
+    else:
+        final_meanings = []
+        final_examples = []
+        final_pos = []
 
     sounds_like = mw_phonetic_to_plain(phonetic)
 
@@ -804,9 +850,9 @@ def merge_mw_meanings(word):
         'phonetic': phonetic,
         'sounds_like': sounds_like,
         'audio': audio,
-        'meanings': [d['definition'] for d in top_defs],
-        'examples': [d['example'] for d in top_defs],
-        'parts_of_speech': [d['pos'] for d in top_defs]
+        'meanings': final_meanings,
+        'examples': final_examples,
+        'parts_of_speech': final_pos
     }, timed_out, None
 
 @app.route('/api/word-details', methods=['GET'])
