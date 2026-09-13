@@ -270,7 +270,7 @@ def fetch_word_definition(word):
     example = clean_mw_markup(examples[0]) if examples else None
     if not example:
         clean_meaning = meaning.rstrip('.').lower()
-        example = f'"{word.capitalize()}" means {clean_meaning}.'
+        example = f'{word.capitalize()} means {clean_meaning}.'
     return {'word': word.capitalize(), 'meaning': meaning, 'example': example}
 
 def get_cached_word_details(word_key):
@@ -342,7 +342,7 @@ def get_daily_words():
                 example = dict_info['example'] if dict_info and dict_info.get('example') else None
                 if not example:
                     clean_meaning = p['meaning'].rstrip('.').lower()
-                    example = f'"{p["word"].capitalize()}" means {clean_meaning}.'
+                    example = f'{p["word"].capitalize()} means {clean_meaning}.'
                 save_word_example(p['id'], example)
             result.append({
                 'word': p['word'].capitalize(),
@@ -741,7 +741,7 @@ def merge_mw_meanings(word):
     for d in top_defs:
         if not d['example']:
             clean_def = d['definition'].rstrip('.').lower()
-            d['example'] = f'"{word.capitalize()}" means {clean_def}.'
+            d['example'] = f'{word.capitalize()} means {clean_def}.'
 
     sounds_like = mw_phonetic_to_plain(phonetic)
 
