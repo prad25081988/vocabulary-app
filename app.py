@@ -653,6 +653,83 @@ def update_practice_size():
     conn.close()
     return jsonify({'message': 'Practice session size updated', 'session_size': size})
 
+def merge_mw_meanings(word):
+    collegiate_key = os.environ.get('MERRIAM_WEBSTER_API_KEY')
+    intermediate_key = os.environ.get('MERRIAM_WEBSTER_INTERMEDIATE_KEY')
+
+    collegiate_data, timeout1 = fetch_mw_dict(word, 'collegiate', collegiate_key)
+    intermediate_data, timeout2 = fetch_mw_dict(word, 'sd3', intermediate_key)
+    timed_out = timeout1 or timeout2
+
+    sources = []
+    if collegiate_data and isinstance(collegiate_data[0], dict):
+        sources.append(collegiate_data)
+    if intermediate_data and isinstance(intermediate_data[0], dict):
+        sources.append(intermediate_data)
+
+    if not sources:
+        suggestions = None
+        if collegiate_data and isinstance(collegiate_data[0], str):
+            suggestions = collegiate_data
+        elif intermediate_data and isinstance(intermediate_data[0], str):
+            suggestions = intermediate_data
+        return None, timed_out, suggestions
+
+    phonetic = None
+    audio = None
+    meanings_out = []
+    seen_defs = set()
+
+    for data in sources:
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            hwi = entry.get('hwi', {})
+            prs = hwi.get('prs', [])
+            if prs:
+                if not phonetic and prs[0].get('mw'):
+                    phonetic = prs[0].get('mw')
+                if not audio and prs[0].get('sound', {}).get('audio'):
+                    audio = build_mw_audio_url(prs[0]['sound']['audio'])
+
+            pos = entry.get('fl', '')
+            shortdefs = [clean_mw_markup(sd) for sd in entry.get('shortdef', [])]
+            examples_all = extract_mw_examples(entry.get('def', []))
+
+            defs_out = []
+            for i, sd in enumerate(shortdefs[:5]):
+                dedup_key = (pos, sd.lower().strip())
+                if dedup_key in seen_defs:
+                    continue
+                seen_defs.add(dedup_key)
+                defs_out.append({
+                    'definition': sd,
+                    'example': examples_all[i] if i < len(examples_all) else '',
+                    'synonyms': [],
+                    'antonyms': []
+                })
+            if defs_out:
+                meanings_out.append({'partOfSpeech': pos, 'definitions': defs_out, 'synonyms': [], 'antonyms': []})
+
+    # Guarantee at least 3 example sentences across all definitions combined.
+    # Real dictionary examples are used first; if there still aren't enough,
+    # fill the remaining gap with a simple sentence built from the definition
+    # itself so the popup never looks sparse.
+    total_examples = sum(1 for m in meanings_out for d in m['definitions'] if d['example'])
+    if total_examples < 3:
+        for m in meanings_out:
+            for d in m['definitions']:
+                if total_examples >= 3:
+                    break
+                if not d['example']:
+                    clean_def = d['definition'].rstrip('.').lower()
+                    d['example'] = f'"{word.capitalize()}" means {clean_def}.'
+                    total_examples += 1
+            if total_examples >= 3:
+                break
+
+    return {'phonetic': phonetic, 'audio': audio, 'meanings': meanings_out}, timed_out, None
+
 @app.route('/api/word-details', methods=['GET'])
 @authenticate
 def word_details():
@@ -687,16 +764,15 @@ def word_details():
             'note': 'Dictionary lookup is not configured yet (missing API key).'
         })
 
-    data, timed_out = fetch_mw_raw(word)
-    used_word = word
+    merged, timed_out, suggestions = merge_mw_meanings(word)
 
-    if data and isinstance(data[0], str):
-        suggestions = data[:5]
+    if not merged:
         if suggestions:
-            data2, timed_out2 = fetch_mw_raw(suggestions[0])
-            if data2 and isinstance(data2[0], dict):
-                data = data2
-                used_word = suggestions[0]
+            first = suggestions[0]
+            merged2, timed_out2, _ = merge_mw_meanings(first)
+            if merged2:
+                merged = merged2
+                merged['note'] = f'No exact entry for "{word}" — showing results for "{first}".'
             else:
                 return jsonify({
                     'word': word.capitalize(),
@@ -706,28 +782,37 @@ def word_details():
                     'audio': None,
                     'origin': None,
                     'meanings': [],
-                    'note': f'No exact entry for "{word}". Did you mean: {", ".join(suggestions)}?'
+                    'note': f'No exact entry for "{word}". Did you mean: {", ".join(suggestions[:5])}?'
                 })
+        else:
+            return jsonify({
+                'word': word.capitalize(),
+                'found': False,
+                'timed_out': timed_out,
+                'phonetic': None,
+                'audio': None,
+                'origin': None,
+                'meanings': [],
+                'note': None
+            })
 
-    if not data:
-        return jsonify({
-            'word': word.capitalize(),
-            'found': False,
-            'timed_out': timed_out,
-            'phonetic': None,
-            'audio': None,
-            'origin': None,
-            'meanings': [],
-            'note': None
-        })
-
-    result = parse_mw_entries(data, used_word, word)
+    result = {
+        'word': word.capitalize(),
+        'found': bool(merged['meanings']),
+        'timed_out': False,
+        'phonetic': merged['phonetic'],
+        'audio': merged['audio'],
+        'origin': None,
+        'meanings': merged['meanings'],
+        'note': merged.get('note')
+    }
 
     if result['found']:
         save_cached_word_details(word_key, result['phonetic'], result['audio'], result['origin'], result['meanings'], result['note'])
 
     return jsonify(result)
 
+@app.route('/api/practice', methods=['GET'])
 @authenticate
 def practice():
     conn = get_db()
