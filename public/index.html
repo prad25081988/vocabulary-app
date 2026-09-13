@@ -512,7 +512,11 @@
       container.innerHTML = '';
 
       if (!data.meanings || data.meanings.length === 0) {
-        container.innerHTML = '<p style="color:#999;">No additional dictionary details found for this word.</p>';
+        if (data.timed_out) {
+          container.innerHTML = '<p style="color:#999;">The dictionary service is responding slowly right now. Please try again in a moment.</p>';
+        } else {
+          container.innerHTML = '<p style="color:#999;">No additional dictionary details found for this word. Double-check the spelling, or it may not be a standard dictionary word.</p>';
+        }
         return;
       }
 

@@ -486,12 +486,42 @@ def word_details():
     word = request.args.get('word', '').strip()
     if not word:
         return jsonify({'error': 'Word is required'}), 400
-    try:
-        resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=4)
-        if resp.status_code != 200:
-            return jsonify({'word': word.capitalize(), 'found': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
 
-        data = resp.json()
+    data = None
+    timed_out = False
+    for attempt_timeout in (6, 8):
+        try:
+            resp = requests.get(f'https://api.dictionaryapi.dev/api/v2/entries/en/{word.lower()}', timeout=attempt_timeout)
+            if resp.status_code == 200:
+                data = resp.json()
+                timed_out = False
+                break
+            else:
+                # A clean non-200 (e.g. 404 word not found) — no point retrying.
+                data = None
+                timed_out = False
+                break
+        except requests.exceptions.Timeout:
+            timed_out = True
+            continue
+        except Exception as e:
+            print('word-details error:', str(e))
+            data = None
+            timed_out = False
+            break
+
+    if not data:
+        return jsonify({
+            'word': word.capitalize(),
+            'found': False,
+            'timed_out': timed_out,
+            'phonetic': None,
+            'audio': None,
+            'origin': None,
+            'meanings': []
+        })
+
+    try:
         phonetic = None
         audio = None
         origin = None
@@ -527,14 +557,15 @@ def word_details():
         return jsonify({
             'word': word.capitalize(),
             'found': True,
+            'timed_out': False,
             'phonetic': phonetic,
             'audio': audio,
             'origin': origin,
             'meanings': meanings_out
         })
     except Exception as e:
-        print('word-details error:', str(e))
-        return jsonify({'word': word.capitalize(), 'found': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
+        print('word-details parse error:', str(e))
+        return jsonify({'word': word.capitalize(), 'found': False, 'timed_out': False, 'phonetic': None, 'audio': None, 'origin': None, 'meanings': []})
 
 @app.route('/api/practice', methods=['GET'])
 @authenticate
