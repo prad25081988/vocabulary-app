@@ -158,6 +158,7 @@ def mw_phonetic_to_plain(phonetic):
 
 def fetch_mw_dict(word, dict_slug, api_key):
     if not api_key:
+        print(f'Merriam-Webster ({dict_slug}): no API key configured')
         return None, False
     for t in (6, 8):
         try:
@@ -167,6 +168,7 @@ def fetch_mw_dict(word, dict_slug, api_key):
             )
             if resp.status_code == 200:
                 return resp.json(), False
+            print(f'Merriam-Webster ({dict_slug}) non-200 status for "{word}":', resp.status_code, resp.text[:200])
             return None, False
         except requests.exceptions.Timeout:
             continue
@@ -327,10 +329,11 @@ def get_daily_words():
 
     # ---- Primary source: the user's own word bank ----
     # Meaning always comes from the user's own database entry (never overwritten).
-    # Example sentence: if we've already fetched one for this word before, reuse
-    # it from the database instead of calling the dictionary API again. This is
-    # what keeps daily words fast and avoids repeated slow external calls (and
-    # the server timeouts that can come from an unreliable third-party API).
+    # Example sentence: reuses the same rich pipeline as the "More Details"
+    # popup (real dictionary sentence first, AI-generated only as a last
+    # resort) via the shared word_details_cache - so it's a genuine sentence
+    # rather than a restatement of the meaning, and it's only ever fetched
+    # once per word, shared across Daily Words and More Details alike.
     user_id = get_primary_user_id()
     if user_id and get_primary_user_word_count(user_id) >= group_size:
         picks = pick_and_mark_daily_words(user_id, group_size, today)
@@ -338,8 +341,8 @@ def get_daily_words():
             if p.get('example'):
                 example = p['example']
             else:
-                dict_info = fetch_word_definition(p['word'])
-                example = dict_info['example'] if dict_info and dict_info.get('example') else None
+                details = get_or_build_word_details(p['word'])
+                example = details['examples'][0] if details.get('examples') else None
                 if not example:
                     clean_meaning = p['meaning'].rstrip('.').lower()
                     example = f'{p["word"].capitalize()} means {clean_meaning}.'
@@ -855,18 +858,15 @@ def merge_mw_meanings(word):
         'parts_of_speech': final_pos
     }, timed_out, None
 
-@app.route('/api/word-details', methods=['GET'])
-@authenticate
-def word_details():
-    word = request.args.get('word', '').strip()
-    if not word:
-        return jsonify({'error': 'Word is required'}), 400
-
+def get_or_build_word_details(word):
+    # Shared by both the "More Details" popup and Daily Words, so a word
+    # looked up from either place is only ever fetched/generated once, and
+    # both features always show consistent meanings/sentences for that word.
     word_key = word.lower()
 
     cached = get_cached_word_details(word_key)
     if cached:
-        return jsonify({
+        return {
             'word': word.capitalize(),
             'found': True,
             'timed_out': False,
@@ -878,10 +878,10 @@ def word_details():
             'examples': cached.get('examples', []),
             'parts_of_speech': cached.get('parts_of_speech', []),
             'note': cached.get('note')
-        })
+        }
 
     if not os.environ.get('MERRIAM_WEBSTER_API_KEY') and not os.environ.get('MERRIAM_WEBSTER_INTERMEDIATE_KEY'):
-        return jsonify({
+        return {
             'word': word.capitalize(),
             'found': False,
             'timed_out': False,
@@ -893,7 +893,7 @@ def word_details():
             'examples': [],
             'parts_of_speech': [],
             'note': 'Dictionary lookup is not configured yet (missing API key).'
-        })
+        }
 
     merged, timed_out, suggestions = merge_mw_meanings(word)
 
@@ -905,7 +905,7 @@ def word_details():
                 merged = merged2
                 merged['note'] = f'No exact entry for "{word}" — showing results for "{first}".'
             else:
-                return jsonify({
+                return {
                     'word': word.capitalize(),
                     'found': False,
                     'timed_out': timed_out2,
@@ -917,9 +917,9 @@ def word_details():
                     'examples': [],
                     'parts_of_speech': [],
                     'note': f'No exact entry for "{word}". Did you mean: {", ".join(suggestions[:5])}?'
-                })
+                }
         else:
-            return jsonify({
+            return {
                 'word': word.capitalize(),
                 'found': False,
                 'timed_out': timed_out,
@@ -931,7 +931,7 @@ def word_details():
                 'examples': [],
                 'parts_of_speech': [],
                 'note': None
-            })
+            }
 
     result = {
         'word': word.capitalize(),
@@ -957,7 +957,15 @@ def word_details():
             'parts_of_speech': result['parts_of_speech']
         }, result['note'])
 
-    return jsonify(result)
+    return result
+
+@app.route('/api/word-details', methods=['GET'])
+@authenticate
+def word_details():
+    word = request.args.get('word', '').strip()
+    if not word:
+        return jsonify({'error': 'Word is required'}), 400
+    return jsonify(get_or_build_word_details(word))
 
 @app.route('/api/practice', methods=['GET'])
 @authenticate
