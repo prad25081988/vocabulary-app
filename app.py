@@ -680,6 +680,50 @@ def update_practice_size():
     conn.close()
     return jsonify({'message': 'Practice session size updated', 'session_size': size})
 
+def generate_ai_example(word, definition):
+    # Only called when Merriam-Webster itself has no example sentence for this
+    # specific meaning. Uses Claude Haiku (cheapest model) since this is a
+    # simple, well-defined task. If no key is set, or the call fails for any
+    # reason (timeout, network issue, key removed), this returns None and the
+    # caller falls back to the old definition-based sentence - so the app
+    # keeps working fine even if this is turned off at any point.
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return None
+    try:
+        resp = requests.post(
+            'https://api.anthropic.com/v1/messages',
+            headers={
+                'x-api-key': api_key,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json'
+            },
+            json={
+                'model': 'claude-haiku-4-5-20251001',
+                'max_tokens': 100,
+                'messages': [{
+                    'role': 'user',
+                    'content': (
+                        f'Write ONE natural, clear example sentence (10-20 words) using the '
+                        f'word "{word}" with this specific meaning: "{definition}". '
+                        f'Reply with ONLY the sentence itself - no quotes, no preamble, no explanation.'
+                    )
+                }]
+            },
+            timeout=8
+        )
+        if resp.status_code != 200:
+            print('Anthropic API error status:', resp.status_code, resp.text[:200])
+            return None
+        data = resp.json()
+        content = data.get('content', [])
+        if content and content[0].get('text'):
+            return content[0]['text'].strip().strip('"')
+        return None
+    except Exception as e:
+        print('generate_ai_example error:', str(e))
+        return None
+
 def merge_mw_meanings(word):
     collegiate_key = os.environ.get('MERRIAM_WEBSTER_API_KEY')
     intermediate_key = os.environ.get('MERRIAM_WEBSTER_INTERMEDIATE_KEY')
@@ -736,12 +780,17 @@ def merge_mw_meanings(word):
     top_defs = flat_defs[:3]
 
     # Every meaning gets its own example. Real dictionary examples are used
-    # first; if one is missing, a simple sentence built from the definition
-    # fills the gap so nothing in the popup is left blank.
+    # first. If one is missing, an AI-generated sentence fills the gap; if
+    # that call isn't available or fails for any reason, a simple sentence
+    # built from the definition is used instead so nothing is ever left blank.
     for d in top_defs:
         if not d['example']:
-            clean_def = d['definition'].rstrip('.').lower()
-            d['example'] = f'{word.capitalize()} means {clean_def}.'
+            ai_example = generate_ai_example(word, d['definition'])
+            if ai_example:
+                d['example'] = ai_example
+            else:
+                clean_def = d['definition'].rstrip('.').lower()
+                d['example'] = f'{word.capitalize()} means {clean_def}.'
 
     sounds_like = mw_phonetic_to_plain(phonetic)
 
