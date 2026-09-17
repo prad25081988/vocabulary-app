@@ -142,6 +142,7 @@
     </div>
     <div id="listTab" class="card hidden">
       <h2>All Words (<span id="wordCount">0</span>)</h2>
+      <input id="wordSearchInput" placeholder="Search words or meanings..." oninput="filterWordList()" />
       <table>
         <thead><tr><th>Word</th><th>Meaning</th><th>Action</th></tr></thead>
         <tbody id="wordList"></tbody>
@@ -429,14 +430,21 @@
       showWordDetails(word, meaning);
     }
 
+    let allWords = [];
+
     async function loadWords() {
       const res = await fetch('/api/words', {headers: {'Authorization':token}});
-      const words = await res.json();
+      allWords = await res.json();
+      document.getElementById('wordSearchInput').value = '';
+      renderWordList(allWords);
+    }
+
+    function renderWordList(words) {
       document.getElementById('wordCount').textContent = words.length;
       const tbody = document.getElementById('wordList');
       tbody.innerHTML = '';
       if (words.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">No words added yet</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">No words found</td></tr>';
         return;
       }
       words.forEach(w => {
@@ -444,6 +452,18 @@
         tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td class="list-action-cell"><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
         tbody.appendChild(tr);
       });
+    }
+
+    function filterWordList() {
+      const query = document.getElementById('wordSearchInput').value.trim().toLowerCase();
+      if (!query) {
+        renderWordList(allWords);
+        return;
+      }
+      const filtered = allWords.filter(w =>
+        w.word.toLowerCase().includes(query) || w.meaning.toLowerCase().includes(query)
+      );
+      renderWordList(filtered);
     }
 
     function editWord(id, currentWord, currentMeaning) {
