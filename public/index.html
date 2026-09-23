@@ -173,6 +173,7 @@
         <button class="btn-blue" onclick="showWordDetails(practiceWords[currentIndex].word, practiceWords[currentIndex].meaning)">More Details</button>
         <div class="practice-meaning hidden" id="practiceMeaning"></div>
         <br/><br/>
+        <button class="btn-blue hidden" id="prevBtn" onclick="prevWord()">← Previous Word</button>
         <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
         <button class="btn-red hidden" id="finishBtn" onclick="finishPractice()">Finish</button>
         <br/><br/>
@@ -449,7 +450,10 @@
       }
       words.forEach(w => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td><strong>${w.word}</strong></td><td>${w.meaning}</td><td class="list-action-cell"><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
+        tr.innerHTML = `<td class="word-cell" style="cursor:pointer;"><strong>${w.word}</strong></td><td class="word-cell" style="cursor:pointer;">${w.meaning}</td><td class="list-action-cell"><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
+        tr.querySelectorAll('.word-cell').forEach(cell => {
+          cell.onclick = () => showWordDetails(w.word, w.meaning);
+        });
         tbody.appendChild(tr);
       });
     }
@@ -684,6 +688,7 @@
       document.getElementById('practiceMeaning').classList.add('hidden');
       document.getElementById('nextBtn').classList.add('hidden');
       document.getElementById('finishBtn').classList.add('hidden');
+      document.getElementById('prevBtn').classList.toggle('hidden', currentIndex === 0);
     }
 
     function revealAnswer() {
@@ -696,10 +701,15 @@
     }
 
     function nextWord() { currentIndex++; showWord(); }
+    function prevWord() { if (currentIndex > 0) { currentIndex--; showWord(); } }
 
-    function finishPractice() {
+    async function finishPractice() {
       document.getElementById('practiceArea').classList.add('hidden');
       document.getElementById('practiceComplete').classList.remove('hidden');
+      await fetch('/api/practice/complete', {
+        method: 'POST',
+        headers: {'Authorization': token}
+      });
     }
 
     async function loadDailyWords() {

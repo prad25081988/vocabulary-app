@@ -7,6 +7,7 @@ import os
 import requests
 import json
 import re
+import threading
 import psycopg2
 import psycopg2.extras
 from functools import wraps
@@ -432,11 +433,20 @@ def init_db():
             cached_at TIMESTAMP DEFAULT NOW()
         )
     ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS practice_sessions (
+            user_id INTEGER REFERENCES users(id),
+            session_date DATE,
+            word_ids TEXT,
+            completed BOOLEAN DEFAULT FALSE,
+            PRIMARY KEY (user_id, session_date)
+        )
+    ''')
     conn.commit()
     cur.close()
     conn.close()
 
-init_db()
+threading.Thread(target=init_db, daemon=True).start()
 
 def authenticate(f):
     @wraps(f)
@@ -612,7 +622,7 @@ def daily_words():
 def get_words():
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute('SELECT * FROM words WHERE user_id = %s', (request.user['id'],))
+    cur.execute('SELECT * FROM words WHERE user_id = %s ORDER BY id ASC', (request.user['id'],))
     words = cur.fetchall()
     cur.close()
     conn.close()
@@ -977,9 +987,69 @@ def practice():
     cur.close()
     conn.close()
     session_size = row['practice_session_size'] if row and row['practice_session_size'] else 20
-    words_list = get_practice_session(request.user['id'], session_size=session_size)
-    random.shuffle(words_list)
+    words_list = get_or_create_todays_practice_session(request.user['id'], session_size)
     return jsonify(words_list)
+
+@app.route('/api/practice/complete', methods=['POST'])
+@authenticate
+def complete_practice():
+    today = date.today()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        'UPDATE practice_sessions SET completed = TRUE WHERE user_id = %s AND session_date = %s',
+        (request.user['id'], today)
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({'message': 'Practice session marked complete'})
+
+def get_or_create_todays_practice_session(user_id, session_size):
+    # Keeps the same words in the same order for the whole day, so leaving
+    # and returning to Practice mode (without finishing) resumes exactly
+    # where the list was, rather than reshuffling into a new set. Once the
+    # session is marked complete, the next Start Practice generates a fresh one.
+    today = date.today()
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute(
+        'SELECT word_ids, completed FROM practice_sessions WHERE user_id = %s AND session_date = %s',
+        (user_id, today)
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if row and not row['completed']:
+        word_ids = json.loads(row['word_ids'])
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute('SELECT id, word, meaning FROM words WHERE id = ANY(%s)', (word_ids,))
+        fetched = {w['id']: w for w in cur.fetchall()}
+        cur.close()
+        conn.close()
+        ordered = [dict(fetched[wid]) for wid in word_ids if wid in fetched]
+        if ordered:
+            return ordered
+        # every word in that saved session was deleted since - fall through to build a fresh one
+
+    words_list = get_practice_session(user_id, session_size=session_size)
+    random.shuffle(words_list)
+    new_ids = [w['id'] for w in words_list]
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO practice_sessions (user_id, session_date, word_ids, completed)
+        VALUES (%s, %s, %s, FALSE)
+        ON CONFLICT (user_id, session_date) DO UPDATE SET word_ids = EXCLUDED.word_ids, completed = FALSE
+    ''', (user_id, today, json.dumps(new_ids)))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return words_list
 
 def get_practice_session(user_id, session_size=20):
     # Each practice session mixes two groups so that words needing more
