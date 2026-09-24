@@ -29,9 +29,11 @@
     th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f0f0f0; }
     .hidden { display: none; }
-    .practice-card { text-align: center; padding: 30px; }
+    .practice-card { text-align: center; padding: 30px; margin-top: 4px; }
     .practice-word { font-size: 32px; font-weight: bold; color: #333; margin-bottom: 20px; }
-    .practice-meaning { font-size: 18px; color: #666; margin-bottom: 20px; }
+    .practice-meaning { font-size: 18px; color: #666; margin: 20px 0; }
+    .practice-action-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 24px; }
+    .practice-nav-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 24px; }
     .progress { color: #999; font-size: 14px; margin-bottom: 20px; }
     .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
     .tab { padding: 10px 20px; background: #ddd; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; }
@@ -147,6 +149,7 @@
         <thead><tr><th>Word</th><th>Meaning</th><th>Action</th></tr></thead>
         <tbody id="wordList"></tbody>
       </table>
+      <div id="wordListPagination" style="margin-top:14px; text-align:center; display:flex; flex-wrap:wrap; justify-content:center; gap:6px;"></div>
     </div>
     <div id="practiceTab" class="card hidden">
       <div id="practiceStart">
@@ -166,18 +169,20 @@
       </div>
       <div id="practiceArea" class="hidden practice-card">
         <div class="progress">Word <span id="currentNum">1</span> of <span id="totalNum">0</span></div>
-        <div class="progress" id="practicePrompt" style="font-weight:bold; color:#1976D2;"></div>
+        <div class="progress" id="practicePrompt" style="font-weight:bold; color:#1976D2; margin-top:6px;"></div>
         <div class="practice-word" id="practiceWord"></div>
-        <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
-        <button class="btn-orange" id="revealBtn" onclick="revealAnswer()">Reveal Meaning</button>
-        <button class="btn-blue" onclick="showWordDetails(practiceWords[currentIndex].word, practiceWords[currentIndex].meaning)">More Details</button>
+        <div class="practice-action-row">
+          <button class="btn-blue" onclick="editPracticeWord()">Edit</button>
+          <button class="btn-orange" id="revealBtn" onclick="revealAnswer()">Reveal Meaning</button>
+          <button class="btn-blue" onclick="showWordDetails(practiceWords[currentIndex].word, practiceWords[currentIndex].meaning)">More Details</button>
+        </div>
         <div class="practice-meaning hidden" id="practiceMeaning"></div>
-        <br/><br/>
-        <button class="btn-blue hidden" id="prevBtn" onclick="prevWord()">← Previous Word</button>
-        <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
-        <button class="btn-red hidden" id="finishBtn" onclick="finishPractice()">Finish</button>
-        <br/><br/>
-        <button class="link-btn" onclick="backToPracticeStart()">← Change session settings</button>
+        <div class="practice-nav-row">
+          <button class="btn-blue hidden" id="prevBtn" onclick="prevWord()">← Previous Word</button>
+          <button class="btn-blue hidden" id="nextBtn" onclick="nextWord()">Next Word →</button>
+          <button class="btn-red hidden" id="finishBtn" onclick="finishPractice()">Finish</button>
+        </div>
+        <button class="link-btn" style="margin-top:16px;" onclick="backToPracticeStart()">← Change session settings</button>
       </div>
       <div id="practiceComplete" class="hidden practice-card">
         <h2>🎉 Practice Complete!</h2>
@@ -433,10 +438,14 @@
 
     let allWords = [];
 
+    const WORD_LIST_PAGE_SIZE = 50;
+    let currentWordListPage = 1;
+
     async function loadWords() {
       const res = await fetch('/api/words', {headers: {'Authorization':token}});
       allWords = await res.json();
       document.getElementById('wordSearchInput').value = '';
+      currentWordListPage = 1;
       renderWordList(allWords);
     }
 
@@ -446,9 +455,16 @@
       tbody.innerHTML = '';
       if (words.length === 0) {
         tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#999;">No words found</td></tr>';
+        document.getElementById('wordListPagination').innerHTML = '';
         return;
       }
-      words.forEach(w => {
+
+      const totalPages = Math.max(1, Math.ceil(words.length / WORD_LIST_PAGE_SIZE));
+      if (currentWordListPage > totalPages) currentWordListPage = totalPages;
+      const startIdx = (currentWordListPage - 1) * WORD_LIST_PAGE_SIZE;
+      const pageWords = words.slice(startIdx, startIdx + WORD_LIST_PAGE_SIZE);
+
+      pageWords.forEach(w => {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td class="word-cell" style="cursor:pointer;"><strong>${w.word}</strong></td><td class="word-cell" style="cursor:pointer;">${w.meaning}</td><td class="list-action-cell"><button class="btn-blue" onclick="editWord(${w.id}, '${w.word.replace(/'/g,"\\'")}', '${w.meaning.replace(/'/g,"\\'")}')">Edit</button><button class="btn-red" onclick="deleteWord(${w.id})">Delete</button></td>`;
         tr.querySelectorAll('.word-cell').forEach(cell => {
@@ -456,10 +472,44 @@
         });
         tbody.appendChild(tr);
       });
+
+      renderWordListPagination(words, totalPages);
+    }
+
+    function renderWordListPagination(words, totalPages) {
+      const container = document.getElementById('wordListPagination');
+      container.innerHTML = '';
+      if (totalPages <= 1) return;
+
+      const makeBtn = (label, page, disabled, active) => {
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.disabled = disabled;
+        btn.className = active ? 'btn-blue' : '';
+        btn.style.padding = '5px 10px';
+        btn.style.fontSize = '13px';
+        if (!active) { btn.style.background = disabled ? '#ddd' : '#eee'; btn.style.color = disabled ? '#999' : '#333'; }
+        if (!disabled) btn.onclick = () => { currentWordListPage = page; renderWordList(words); };
+        return btn;
+      };
+
+      container.appendChild(makeBtn('« First', 1, currentWordListPage === 1));
+      container.appendChild(makeBtn('‹ Prev', currentWordListPage - 1, currentWordListPage === 1));
+
+      let startPage = Math.max(1, currentWordListPage - 2);
+      let endPage = Math.min(totalPages, startPage + 4);
+      startPage = Math.max(1, endPage - 4);
+      for (let p = startPage; p <= endPage; p++) {
+        container.appendChild(makeBtn(String(p), p, false, p === currentWordListPage));
+      }
+
+      container.appendChild(makeBtn('Next ›', currentWordListPage + 1, currentWordListPage === totalPages));
+      container.appendChild(makeBtn('Last »', totalPages, currentWordListPage === totalPages));
     }
 
     function filterWordList() {
       const query = document.getElementById('wordSearchInput').value.trim().toLowerCase();
+      currentWordListPage = 1;
       if (!query) {
         renderWordList(allWords);
         return;

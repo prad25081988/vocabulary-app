@@ -434,12 +434,11 @@ def init_db():
         )
     ''')
     cur.execute('''
-        CREATE TABLE IF NOT EXISTS practice_sessions (
-            user_id INTEGER REFERENCES users(id),
-            session_date DATE,
+        CREATE TABLE IF NOT EXISTS active_practice_session (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id),
             word_ids TEXT,
             completed BOOLEAN DEFAULT FALSE,
-            PRIMARY KEY (user_id, session_date)
+            updated_at TIMESTAMP DEFAULT NOW()
         )
     ''')
     conn.commit()
@@ -993,12 +992,11 @@ def practice():
 @app.route('/api/practice/complete', methods=['POST'])
 @authenticate
 def complete_practice():
-    today = date.today()
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        'UPDATE practice_sessions SET completed = TRUE WHERE user_id = %s AND session_date = %s',
-        (request.user['id'], today)
+        'UPDATE active_practice_session SET completed = TRUE, updated_at = NOW() WHERE user_id = %s',
+        (request.user['id'],)
     )
     conn.commit()
     cur.close()
@@ -1006,33 +1004,59 @@ def complete_practice():
     return jsonify({'message': 'Practice session marked complete'})
 
 def get_or_create_todays_practice_session(user_id, session_size):
-    # Keeps the same words in the same order for the whole day, so leaving
-    # and returning to Practice mode (without finishing) resumes exactly
-    # where the list was, rather than reshuffling into a new set. Once the
-    # session is marked complete, the next Start Practice generates a fresh one.
-    today = date.today()
+    # The session's words and order stay exactly fixed - permanently, across
+    # any number of days or visits - until the user explicitly finishes it
+    # (Finish button -> /api/practice/complete). Only then does the next
+    # Start Practice generate a brand new session.
+    #
+    # If the person changes their session-size setting mid-session, the
+    # already-selected words and their order are never disturbed: a larger
+    # size appends newly-picked words after the existing ones (using the
+    # normal least-shown/random selection, excluding words already in the
+    # session); a smaller size simply shows fewer of the same list without
+    # forgetting the rest, so growing back later restores them.
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(
-        'SELECT word_ids, completed FROM practice_sessions WHERE user_id = %s AND session_date = %s',
-        (user_id, today)
+        'SELECT word_ids, completed FROM active_practice_session WHERE user_id = %s',
+        (user_id,)
     )
     row = cur.fetchone()
     cur.close()
     conn.close()
 
     if row and not row['completed']:
-        word_ids = json.loads(row['word_ids'])
+        stored_ids = json.loads(row['word_ids'])
         conn = get_db()
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute('SELECT id, word, meaning FROM words WHERE id = ANY(%s)', (word_ids,))
+        cur.execute('SELECT id, word, meaning FROM words WHERE id = ANY(%s)', (stored_ids,))
         fetched = {w['id']: w for w in cur.fetchall()}
         cur.close()
         conn.close()
-        ordered = [dict(fetched[wid]) for wid in word_ids if wid in fetched]
+        ordered = [dict(fetched[wid]) for wid in stored_ids if wid in fetched]
+
         if ordered:
-            return ordered
-        # every word in that saved session was deleted since - fall through to build a fresh one
+            if session_size <= len(ordered):
+                return ordered[:session_size]
+
+            additional_needed = session_size - len(ordered)
+            existing_ids = [w['id'] for w in ordered]
+            new_words = get_practice_session(user_id, session_size=additional_needed, exclude_ids=existing_ids)
+            random.shuffle(new_words)
+            combined = ordered + new_words
+            combined_ids = [w['id'] for w in combined]
+
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute(
+                'UPDATE active_practice_session SET word_ids = %s, updated_at = NOW() WHERE user_id = %s',
+                (json.dumps(combined_ids), user_id)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            return combined
+        # every word in the saved session was deleted since - fall through to build a fresh one
 
     words_list = get_practice_session(user_id, session_size=session_size)
     random.shuffle(words_list)
@@ -1041,17 +1065,17 @@ def get_or_create_todays_practice_session(user_id, session_size):
     conn = get_db()
     cur = conn.cursor()
     cur.execute('''
-        INSERT INTO practice_sessions (user_id, session_date, word_ids, completed)
-        VALUES (%s, %s, %s, FALSE)
-        ON CONFLICT (user_id, session_date) DO UPDATE SET word_ids = EXCLUDED.word_ids, completed = FALSE
-    ''', (user_id, today, json.dumps(new_ids)))
+        INSERT INTO active_practice_session (user_id, word_ids, completed)
+        VALUES (%s, %s, FALSE)
+        ON CONFLICT (user_id) DO UPDATE SET word_ids = EXCLUDED.word_ids, completed = FALSE, updated_at = NOW()
+    ''', (user_id, json.dumps(new_ids)))
     conn.commit()
     cur.close()
     conn.close()
 
     return words_list
 
-def get_practice_session(user_id, session_size=20):
+def get_practice_session(user_id, session_size=20, exclude_ids=None):
     # Each practice session mixes two groups so that words needing more
     # practice show up more often, without ever fully freezing out older
     # or already-practiced words:
@@ -1060,9 +1084,12 @@ def get_practice_session(user_id, session_size=20):
     #   - 30% of the session: a genuinely random sample from the ENTIRE word
     #     bank, regardless of shown_count, so well-practiced words still get
     #     periodically refreshed instead of disappearing from rotation forever.
+    # exclude_ids: words already picked elsewhere (used when growing an
+    # existing session to a larger size, so the same word isn't picked twice).
+    exclude_ids = exclude_ids or []
     conn = get_db()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    cur.execute('SELECT COUNT(*) AS cnt FROM words WHERE user_id = %s', (user_id,))
+    cur.execute('SELECT COUNT(*) AS cnt FROM words WHERE user_id = %s AND id != ALL(%s)', (user_id, exclude_ids))
     total = cur.fetchone()['cnt']
     size = min(session_size, total)
     if size == 0:
@@ -1075,29 +1102,22 @@ def get_practice_session(user_id, session_size=20):
 
     cur.execute('''
         SELECT id, word, meaning, shown_count FROM words
-        WHERE user_id = %s
+        WHERE user_id = %s AND id != ALL(%s)
         ORDER BY shown_count ASC, id ASC
         LIMIT %s
-    ''', (user_id, priority_count))
+    ''', (user_id, exclude_ids, priority_count))
     priority_words = cur.fetchall()
     priority_ids = [w['id'] for w in priority_words]
+    all_excluded = list(exclude_ids) + priority_ids
 
     remaining_words = []
     if random_count > 0:
-        if priority_ids:
-            cur.execute('''
-                SELECT id, word, meaning, shown_count FROM words
-                WHERE user_id = %s AND id != ALL(%s)
-                ORDER BY RANDOM()
-                LIMIT %s
-            ''', (user_id, priority_ids, random_count))
-        else:
-            cur.execute('''
-                SELECT id, word, meaning, shown_count FROM words
-                WHERE user_id = %s
-                ORDER BY RANDOM()
-                LIMIT %s
-            ''', (user_id, random_count))
+        cur.execute('''
+            SELECT id, word, meaning, shown_count FROM words
+            WHERE user_id = %s AND id != ALL(%s)
+            ORDER BY RANDOM()
+            LIMIT %s
+        ''', (user_id, all_excluded, random_count))
         remaining_words = cur.fetchall()
 
     combined = list(priority_words) + list(remaining_words)
